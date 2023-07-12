@@ -149,8 +149,7 @@ def loss_fn(logits, actions, **kwargs):
 
 
 def train(model: nn.Module, dataloader: torch.utils.data.DataLoader):
-    breakpoint()
-
+    model.to(config.device)
     optim = torch.optim.AdamW(
         model.parameters(),
         lr=config.learning_rate,
