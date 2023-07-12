@@ -106,9 +106,9 @@ class Batch(TensorsDataclass):
     def collate_fn(cls, episodes: List[EpisodeData], device: str = None) -> "Batch":
         device = device or config.device
         return cls(
-            id=torch.Tensor([x.id for x in episodes], device=device),
-            seed=torch.Tensor([x.seed for x in episodes], device=device) if episodes[0].seed else None,
-            total_timesteps=torch.Tensor([x.total_timesteps for x in episodes], device=device),
+            id=torch.tensor([x.id for x in episodes], device=device),
+            seed=torch.tensor([x.seed for x in episodes], device=device) if episodes[0].seed else None,
+            total_timesteps=torch.tensor([x.total_timesteps for x in episodes], device=device),
             observations=torch.nn.utils.rnn.pad_sequence(
                 [torch.as_tensor(x.observations, dtype=torch.float32) for x in episodes],
                 batch_first=True,
