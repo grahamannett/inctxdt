@@ -22,7 +22,7 @@ class config:
     learning_rate: float = 1e-4
     betas: Tuple[float, float] = (0.9, 0.999)
     weight_decay: float = 1e-4
-    warmup_steps: int = 100
+    warmup_steps: int = 10
 
     clip_grad: bool = True
 
@@ -78,7 +78,7 @@ class MinariWrapper(Dataset):
         return self.ds.recover_environment()
 
 
-class TensorsDataclass:
+class SamplesDataclass:
     def to(self, device: str):
         return self.__class__(
             **{k: v.to(device) for k, v in self.__dict__.items() if v is not None},
@@ -89,7 +89,7 @@ class TensorsDataclass:
 
 
 @dataclass
-class Batch(TensorsDataclass):
+class Batch(SamplesDataclass):
     id: torch.Tensor
     total_timesteps: torch.Tensor
     observations: torch.Tensor
@@ -185,7 +185,7 @@ def train(model: nn.Module, dataloader: torch.utils.data.DataLoader):
             optim.step()
             scheduler.step()
 
-        eval_info = eval_rollout(model, env=env, target_return=1000.0)
+        eval_info = eval_rollout(model, env=env, target_return=1000.0, device=config.device)
         print(f"Eval: {eval_info}")
 
 
@@ -196,5 +196,5 @@ if __name__ == "__main__":
     env = ds.get_env()
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
-    model = DecisionTransformer(state_dim=state_dim, action_dim=action_dim, embedding_dim=32, num_layers=2)
+    model = DecisionTransformer(state_dim=state_dim, action_dim=action_dim, embedding_dim=128, num_layers=6)
     train(model, dataloader)
