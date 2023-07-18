@@ -26,6 +26,7 @@ class config:
     betas: Tuple[float, float] = (0.9, 0.999)
     weight_decay: float = 1e-4
     warmup_steps: int = 10
+    batch_size: int = 4
 
     clip_grad: bool = True
 
@@ -94,7 +95,6 @@ class AcrossEpisodeDataset(MinariDataset):
     def __init__(self, env_name: str, seq_len: int = None, max_num_epsisodes: int = 3, drop_last: bool = False):
         super().__init__(env_name, seq_len)
         self.max_num_episodes = max_num_epsisodes
-
         self.drop_last = drop_last
 
     def __getitem__(self, idx: int) -> Any:
@@ -242,7 +242,7 @@ if __name__ == "__main__":
 
     ds = MinariDataset(env_name=env_name)
 
-    dataloader = DataLoader(ds, batch_size=16, shuffle=True, collate_fn=Batch.collate_fn)
+    dataloader = DataLoader(ds, batch_size=config.batch_size, shuffle=True, collate_fn=Batch.collate_fn)
     env = ds.recover_environment()
 
     sample = ds[0]
