@@ -32,7 +32,7 @@ class TransformerBlock(nn.Module):
     # [batch_size, seq_len, emb_dim] -> [batch_size, seq_len, emb_dim]
     def forward(self, x: torch.Tensor, padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         # causal_mask = self.causal_mask[: x.shape[1], : x.shape[1]]
-        causal_mask = ~torch.tril(torch.ones(x.shape[1], x.shape[1])).to(bool)
+        causal_mask = ~torch.tril(torch.ones(x.shape[1], x.shape[1])).to(bool).to(x.device)
 
         norm_x = self.norm1(x)
         attention_out = self.attention(
@@ -43,6 +43,7 @@ class TransformerBlock(nn.Module):
             key_padding_mask=padding_mask,
             need_weights=False,
         )[0]
+
         # by default pytorch attention does not use dropout
         # after final attention weights projection, while minGPT does:
         # https://github.com/karpathy/minGPT/blob/7218bcfa527c65f164de791099de715b81a95106/mingpt/model.py#L70 # noqa

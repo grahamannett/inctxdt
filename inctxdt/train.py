@@ -191,7 +191,7 @@ def loss_fn(logits, actions, **kwargs):
 
 
 def train(model: nn.Module, dataloader: torch.utils.data.DataLoader):
-    model.to(config.device)
+    model = model.to(config.device)
     optim = torch.optim.AdamW(
         model.parameters(),
         lr=config.learning_rate,
@@ -207,7 +207,8 @@ def train(model: nn.Module, dataloader: torch.utils.data.DataLoader):
         print(f"Epoch {epoch}")
         model.train()
         for batch_idx, batch in enumerate(dataloader):
-            # batch = batch.to(config.device)
+            if batch_idx % 100 == 0:
+                print(f"batch-idx:{batch_idx}/{len(dataloader)}")
 
             padding_mask = ~batch.mask.to(torch.bool)
 
@@ -236,12 +237,12 @@ if __name__ == "__main__":
     config.get()
     # ds = MinariDataset(env_name="pen-human-v0")
     # env_name = "d4rl_hopper-expert-v2"
-    env_name = "d4rl_halfcheetah-expert-v2"
     env_name = "pointmaze-umaze-v0"
+    env_name = "d4rl_halfcheetah-expert-v2"  # test with this to make sure its working
 
     ds = MinariDataset(env_name=env_name)
 
-    dataloader = DataLoader(ds, batch_size=4, shuffle=True, collate_fn=Batch.collate_fn)
+    dataloader = DataLoader(ds, batch_size=16, shuffle=True, collate_fn=Batch.collate_fn)
     env = ds.recover_environment()
 
     sample = ds[0]
