@@ -21,14 +21,11 @@ def eval_rollout(
     states = torch.zeros(1, model.episode_len + 1, model.state_dim, dtype=torch.float, device=device)
     actions = torch.zeros(1, model.episode_len, model.action_dim, dtype=torch.float, device=device)
     returns = torch.zeros(1, model.episode_len + 1, dtype=torch.float, device=device)
-    
+
     time_steps = torch.arange(model.episode_len, dtype=torch.long, device=device)
     time_steps = time_steps.view(1, -1)
 
-    env_reset_out = env.reset()
-    # states_init = env_reset_out[0]
-
-    if isinstance(states_init := env_reset_out[0], dict):
+    if isinstance(states_init := env.reset()[0], dict):
         states_init = flatten_obs_dict(states_init)
 
     states[:, 0] = torch.as_tensor(states_init, device=device)
