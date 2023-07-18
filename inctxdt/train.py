@@ -143,9 +143,7 @@ class Batch(SamplesDataclass):
     env_name: Optional[List[str]] = None
 
     @classmethod
-    def collate_fn(cls, episodes: List[EpisodeData], device: str = None, batch_first: bool = True) -> "Batch":
-        device = device or config.device
-
+    def collate_fn(cls, episodes: List[EpisodeData], device: str = "cpu", batch_first: bool = True) -> "Batch":
         return cls(
             id=torch.tensor([x.id for x in episodes], device=device),
             seed=torch.tensor([x.seed for x in episodes], device=device) if episodes[0].seed else None,
@@ -185,6 +183,13 @@ class Batch(SamplesDataclass):
             env_name=[x.env_name for x in episodes],
         )
 
+    @classmethod
+    def make_collate_fn(cls, device: str = None, batch_first: bool = True):
+        def collate_fn(episodes: List[EpisodeData]) -> "Batch":
+            return cls.collate_fn(episodes, device=device, batch_first=batch_first)
+
+        return collate_fn
+
 
 def loss_fn(logits, actions, **kwargs):
     return nn.functional.mse_loss(logits, actions, **kwargs)
@@ -206,10 +211,8 @@ def train(model: nn.Module, dataloader: torch.utils.data.DataLoader):
     for epoch in range(config.epochs):
         print(f"Epoch {epoch}")
         model.train()
+        epoch_loss = 0
         for batch_idx, batch in enumerate(dataloader):
-            if batch_idx % 100 == 0:
-                print(f"batch-idx:{batch_idx}/{len(dataloader)}")
-
             padding_mask = ~batch.mask.to(torch.bool)
 
             predicted_actions = model.forward(
@@ -229,6 +232,10 @@ def train(model: nn.Module, dataloader: torch.utils.data.DataLoader):
             optim.step()
             scheduler.step()
 
+            epoch_loss += loss.item()
+            if batch_idx % 100 == 0:
+                print(f"batch-idx:{batch_idx}/{len(dataloader)} | epoch-loss: {epoch_loss:.4f}")
+
         eval_info = eval_rollout(model, env=env, target_return=1000.0, device=config.device)
         print(f"Eval: {eval_info}")
 
@@ -242,7 +249,12 @@ if __name__ == "__main__":
 
     ds = MinariDataset(env_name=env_name)
 
-    dataloader = DataLoader(ds, batch_size=config.batch_size, shuffle=True, collate_fn=Batch.collate_fn)
+    dataloader = DataLoader(
+        ds,
+        batch_size=config.batch_size,
+        shuffle=True,
+        collate_fn=Batch.make_collate_fn(device=config.device, batch_first=True),
+    )
     env = ds.recover_environment()
 
     sample = ds[0]
