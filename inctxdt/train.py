@@ -1,17 +1,20 @@
+import random
 from dataclasses import asdict, dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import minari
 import numpy as np
 import torch
+import os
 import torch.nn as nn
 from gymnasium import Env
-from model import DecisionTransformer
+from minari.storage.datasets_root_dir import get_dataset_path
 from torch.nn import functional as F  # noqa
 from torch.utils.data import DataLoader, Dataset
 
-from episode_data import EpisodeData
-from evaluation import eval_rollout
+from inctxdt.episode_data import EpisodeData
+from inctxdt.evaluation import eval_rollout
+from inctxdt.model import DecisionTransformer
 
 
 class config:
@@ -50,20 +53,32 @@ def discounted_cumsum(x: np.ndarray, gamma: float) -> np.ndarray:
     return cumsum
 
 
-class MinariWrapper(Dataset):
+class MinariDataset(minari.MinariDataset):
     def __init__(self, env_name: str, seq_len: int = None):
-        minari.download_dataset(env_name)
-        self.ds = minari.load_dataset(env_name)
+        data_path = self._get_data_path_from_env_name(env_name)
+        super().__init__(data=data_path)
+
+        self.env_name = env_name
         self.seq_len = seq_len
 
     def __len__(self):
-        return self.ds.total_episodes
+        return self.total_episodes
 
-    def __getitem__(self, idx: int) -> EpisodeData:
-        episode_data = self.ds._data.get_episodes([self.ds.episode_indices[idx]])[0]
+    def __getitem__(self, idx: int, output_cls: Callable = EpisodeData) -> EpisodeData:
+        (episode_data,) = self._data.get_episodes([self.episode_indices[idx]])
+        episode_data = self._fix_episode(episode_data)
+        return output_cls(**episode_data)
 
+    def _get_data_path_from_env_name(self, env_name: str) -> str:
+        if env_name not in minari.list_local_datasets():
+            minari.download_dataset(env_name)
+        file_path = get_dataset_path(env_name)
+        data_path = os.path.join(file_path, "data", "main_data.hdf5")
+        return data_path
+
+    def _fix_episode(self, episode_data: Dict[str, Any]) -> Dict[str, Any]:
         if self.seq_len:
-            episode_data = self._fix_episode(episode_data)
+            raise NotImplementedError
 
         if episode_data["seed"] == "None":
             episode_data["seed"] = None
@@ -71,18 +86,42 @@ class MinariWrapper(Dataset):
         episode_data["returns_to_go"] = discounted_cumsum(episode_data["rewards"], gamma=1.0)
         episode_data["mask"] = np.ones(episode_data["total_timesteps"])
         episode_data["observations"] = episode_data["observations"][:-1]
+        episode_data["env_name"] = self.env_name
+        return episode_data
 
-        return EpisodeData(**episode_data)
 
-    def get_env(self):
-        return self.ds.recover_environment()
+class AcrossEpisodeDataset(MinariDataset):
+    def __init__(self, env_name: str, seq_len: int = None, max_num_epsisodes: int = 3, drop_last: bool = False):
+        super().__init__(env_name, seq_len)
+        self.max_num_episodes = max_num_epsisodes
+
+        self.drop_last = drop_last
+
+    def __getitem__(self, idx: int) -> Any:
+        ep_idxs = [self.ds.episode_indices[idx : idx + self.max_num_episodes]]
+        episode_data = self.ds._data.get_episodes(*ep_idxs)
+
+        to_get = self.max_num_episodes
+        episodes = [super().__getitem__(idx, output_cls=dict)]
+
+        while to_get > 0:
+            if (idx := idx + 1) >= len(self):
+                if self.drop_last:
+                    break
+                idx = 0
+
+            episode = super().__getitem__(idx, output_cls=dict)
+            episodes.append(episode)
+            to_get -= 1
+        return episodes
 
 
 class SamplesDataclass:
     def to(self, device: str):
-        return self.__class__(
-            **{k: v.to(device) for k, v in self.__dict__.items() if v is not None},
-        )
+        for k, v in self.__dict__.items():
+            if isinstance(v, torch.Tensor):
+                self.__dict__[k] = v.to(device)
+        return self
 
     def asdict(self) -> Dict[str, torch.Tensor]:
         return asdict(self)
@@ -101,46 +140,49 @@ class Batch(SamplesDataclass):
     seed: Optional[torch.Tensor] = None  # out of order with EpisodeData
     timesteps: Optional[torch.Tensor] = None
     mask: Optional[torch.Tensor] = None
+    env_name: Optional[List[str]] = None
 
     @classmethod
-    def collate_fn(cls, episodes: List[EpisodeData], device: str = None) -> "Batch":
+    def collate_fn(cls, episodes: List[EpisodeData], device: str = None, batch_first: bool = True) -> "Batch":
         device = device or config.device
+
         return cls(
             id=torch.tensor([x.id for x in episodes], device=device),
             seed=torch.tensor([x.seed for x in episodes], device=device) if episodes[0].seed else None,
             total_timesteps=torch.tensor([x.total_timesteps for x in episodes], device=device),
             observations=torch.nn.utils.rnn.pad_sequence(
                 [torch.as_tensor(x.observations, dtype=torch.float32) for x in episodes],
-                batch_first=True,
+                batch_first=batch_first,
             ).to(device),
             actions=torch.nn.utils.rnn.pad_sequence(
                 [torch.as_tensor(x.actions, dtype=torch.float32) for x in episodes],
-                batch_first=True,
+                batch_first=batch_first,
             ).to(device),
             rewards=torch.nn.utils.rnn.pad_sequence(
                 [torch.as_tensor(x.rewards, dtype=torch.float32) for x in episodes],
-                batch_first=True,
+                batch_first=batch_first,
             ).to(device),
             returns_to_go=torch.nn.utils.rnn.pad_sequence(
                 [torch.as_tensor(x.returns_to_go, dtype=torch.float32) for x in episodes],
-                batch_first=True,
+                batch_first=batch_first,
             ).to(device),
             terminations=torch.nn.utils.rnn.pad_sequence(
-                [torch.as_tensor(x.terminations, dtype=torch.float32) for x in episodes],
-                batch_first=True,
+                [torch.as_tensor(x.terminations, dtype=torch.int) for x in episodes],
+                batch_first=batch_first,
             ).to(device),
             truncations=torch.nn.utils.rnn.pad_sequence(
-                [torch.as_tensor(x.truncations, dtype=torch.float32) for x in episodes],
-                batch_first=True,
+                [torch.as_tensor(x.truncations, dtype=torch.int) for x in episodes],
+                batch_first=batch_first,
             ).to(device),
             timesteps=torch.nn.utils.rnn.pad_sequence(
                 [torch.as_tensor(x.timesteps, dtype=torch.int) for x in episodes],
-                batch_first=True,
+                batch_first=batch_first,
             ).to(device),
             mask=torch.nn.utils.rnn.pad_sequence(
                 [torch.as_tensor(x.mask, dtype=torch.int) for x in episodes],
-                batch_first=True,
+                batch_first=batch_first,
             ).to(device),
+            env_name=[x.env_name for x in episodes],
         )
 
 
@@ -165,9 +207,10 @@ def train(model: nn.Module, dataloader: torch.utils.data.DataLoader):
         print(f"Epoch {epoch}")
         model.train()
         for batch_idx, batch in enumerate(dataloader):
-            batch = batch.to(config.device)
+            # batch = batch.to(config.device)
 
             padding_mask = ~batch.mask.to(torch.bool)
+
             predicted_actions = model.forward(
                 states=batch.observations,
                 actions=batch.actions,
@@ -191,10 +234,19 @@ def train(model: nn.Module, dataloader: torch.utils.data.DataLoader):
 
 if __name__ == "__main__":
     config.get()
-    ds = MinariWrapper(env_name="pen-human-v0")
+    # ds = MinariDataset(env_name="pen-human-v0")
+    # env_name = "d4rl_hopper-expert-v2"
+    env_name = "d4rl_halfcheetah-expert-v2"
+    env_name = "pointmaze-umaze-v0"
+
+    ds = MinariDataset(env_name=env_name)
+
     dataloader = DataLoader(ds, batch_size=4, shuffle=True, collate_fn=Batch.collate_fn)
-    env = ds.get_env()
-    state_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.shape[0]
+    env = ds.recover_environment()
+
+    sample = ds[0]
+    state_dim = sample.observations.shape[-1]
+    action_dim = sample.actions.shape[-1]
+
     model = DecisionTransformer(state_dim=state_dim, action_dim=action_dim, embedding_dim=128, num_layers=6)
     train(model, dataloader)

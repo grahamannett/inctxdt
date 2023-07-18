@@ -2,7 +2,7 @@ from typing import Tuple
 
 import torch
 from gymnasium import Env
-from model import DecisionTransformer
+from inctxdt.model import DecisionTransformer
 
 
 # Training and evaluation logic

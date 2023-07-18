@@ -26,6 +26,7 @@ class EpisodeData:
     truncations: np.ndarray
     timesteps: Optional[np.ndarray] = None
     mask: Optional[np.ndarray] = None
+    env_name: Optional[str] = None
 
     def __post_init__(self):
         if self.timesteps is None:

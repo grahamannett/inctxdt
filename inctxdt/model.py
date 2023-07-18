@@ -26,12 +26,13 @@ class TransformerBlock(nn.Module):
             nn.Dropout(residual_dropout),
         )
         # True value indicates that the corresponding position is not allowed to attend
-        self.register_buffer("causal_mask", ~torch.tril(torch.ones(seq_len, seq_len)).to(bool))
+        # self.register_buffer("causal_mask", ~torch.tril(torch.ones(seq_len, seq_len)).to(bool))
         self.seq_len = seq_len
 
     # [batch_size, seq_len, emb_dim] -> [batch_size, seq_len, emb_dim]
     def forward(self, x: torch.Tensor, padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        causal_mask = self.causal_mask[: x.shape[1], : x.shape[1]]
+        # causal_mask = self.causal_mask[: x.shape[1], : x.shape[1]]
+        causal_mask = ~torch.tril(torch.ones(x.shape[1], x.shape[1])).to(bool)
 
         norm_x = self.norm1(x)
         attention_out = self.attention(
@@ -125,7 +126,7 @@ class DecisionTransformer(nn.Module):
 
         # [batch_size, seq_len * 3, emb_dim], (r_0, s_0, a_0, r_1, s_1, a_1, ...)
         sequence = (
-            torch.stack([returns_emb, state_emb, act_emb], dim=1).permute(0, 2, 1, 3).reshape(batch_size, 3 * seq_len, self.embedding_dim)
+            torch.stack([state_emb, act_emb, returns_emb], dim=1).permute(0, 2, 1, 3).reshape(batch_size, 3 * seq_len, self.embedding_dim)
         )
         if padding_mask is not None:
             # [batch_size, seq_len * 3], stack mask identically to fit the sequence
