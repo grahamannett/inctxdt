@@ -17,12 +17,16 @@ from minari import DataCollectorV0
 torch.manual_seed(42)
 
 
-env = DataCollectorV0(gym.make('CartPole-v1'))
-path = os.path.abspath('') + '/logs/ppo/CartPole-v1_1/best_model'
+# env = DataCollectorV0(gym.make("CartPole-v1"))
+env_name = "FrozenLake-v1"
+env = DataCollectorV0(gym.make(env_name, render_mode="human"))
+path = os.path.abspath("") + f"logs/ppo/{env_name}/best_model"
 # path = "logs/ppo/CartPole-v1_1/best_model"
 agent = PPO.load(path)
 
+
 total_episodes = 1_000
+print("starting agent actions")
 for i in tqdm(range(total_episodes)):
     obs, _ = env.reset(seed=42)
     while True:
@@ -32,11 +36,13 @@ for i in tqdm(range(total_episodes)):
         if terminated or truncated:
             break
 
-dataset = minari.create_dataset_from_collector_env(dataset_id="CartPole-v1-expert-local-ppo",
-                                                   collector_env=env,
-                                                   algorithm_name="ExpertPolicy",
-                                                   author="Graham",
-                                                   )
+dataset = minari.create_dataset_from_collector_env(
+    dataset_id=f"{env_name}-ppo",
+    collector_env=env,
+    algorithm_name="ExpertPolicy",
+    author="Graham",
+)
+
 
 class PolicyNetwork(nn.Module):
     def __init__(self, input_dim, output_dim):
@@ -52,35 +58,21 @@ class PolicyNetwork(nn.Module):
         return x
 
 
-
 def collate_fn(batch):
     return {
         "id": torch.Tensor([x.id for x in batch]),
         "seed": torch.Tensor([x.seed for x in batch]),
         "total_timesteps": torch.Tensor([x.total_timesteps for x in batch]),
-        "observations": torch.nn.utils.rnn.pad_sequence(
-            [torch.as_tensor(x.observations) for x in batch],
-            batch_first=True
-        ),
-        "actions": torch.nn.utils.rnn.pad_sequence(
-            [torch.as_tensor(x.actions) for x in batch],
-            batch_first=True
-        ),
-        "rewards": torch.nn.utils.rnn.pad_sequence(
-            [torch.as_tensor(x.rewards) for x in batch],
-            batch_first=True
-        ),
-        "terminations": torch.nn.utils.rnn.pad_sequence(
-            [torch.as_tensor(x.terminations) for x in batch],
-            batch_first=True
-        ),
-        "truncations": torch.nn.utils.rnn.pad_sequence(
-            [torch.as_tensor(x.truncations) for x in batch],
-            batch_first=True
-        )
+        "observations": torch.nn.utils.rnn.pad_sequence([torch.as_tensor(x.observations) for x in batch], batch_first=True),
+        "actions": torch.nn.utils.rnn.pad_sequence([torch.as_tensor(x.actions) for x in batch], batch_first=True),
+        "rewards": torch.nn.utils.rnn.pad_sequence([torch.as_tensor(x.rewards) for x in batch], batch_first=True),
+        "terminations": torch.nn.utils.rnn.pad_sequence([torch.as_tensor(x.terminations) for x in batch], batch_first=True),
+        "truncations": torch.nn.utils.rnn.pad_sequence([torch.as_tensor(x.truncations) for x in batch], batch_first=True),
     }
 
-minari_dataset = minari.load_dataset("CartPole-v1-expert-local-ppo")
+
+print("starting dataloader")
+minari_dataset = minari.load_dataset(f"{env_name}-ppo")
 dataloader = DataLoader(minari_dataset, batch_size=256, shuffle=True, collate_fn=collate_fn)
 
 env = minari_dataset.recover_environment()
@@ -98,7 +90,7 @@ num_epochs = 32
 
 for epoch in range(num_epochs):
     for batch in dataloader:
-        a_pred = policy_net(batch['observations'][:, :-1])
+        a_pred = policy_net(batch["observations"][:, :-1])
         a_hat = F.one_hot(batch["actions"]).type(torch.float32)
         loss = loss_fn(a_pred, a_hat)
 
@@ -109,7 +101,7 @@ for epoch in range(num_epochs):
     print(f"Epoch: {epoch}/{num_epochs}, Loss: {loss.item()}")
 
 # env = gym.make("CartPole-v1", render_mode="human")
-env = gym.make("CartPole-v1")
+env = gym.make(f"{env_name}")
 obs, _ = env.reset(seed=42)
 done = False
 accumulated_rew = 0
