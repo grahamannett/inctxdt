@@ -92,13 +92,17 @@ class MinariDataset(minari.MinariDataset):
 
 
 class AcrossEpisodeDataset(MinariDataset):
-    def __init__(self, env_name: str, seq_len: int = None, max_num_epsisodes: int = 3, drop_last: bool = False):
+    def __init__(self, env_name: str, seq_len: int = None, max_num_epsisodes: int = 2, drop_last: bool = False):
         super().__init__(env_name, seq_len)
         self.max_num_episodes = max_num_epsisodes
         self.drop_last = drop_last
 
     def __getitem__(self, idx: int) -> Any:
         ep_idxs = [self.ds.episode_indices[idx : idx + self.max_num_episodes]]
+        episodes = [super().__getitem__(ep_idx, output_cls=dict) for ep_idx in ep_idxs]
+        breakpoint()
+
+        # ep_idxs = [self.ds.episode_indices[idx : idx + self.max_num_episodes]]
         episode_data = self.ds._data.get_episodes(*ep_idxs)
 
         to_get = self.max_num_episodes
@@ -191,8 +195,8 @@ class Batch(SamplesDataclass):
         return collate_fn
 
 
-def loss_fn(logits, actions, **kwargs):
-    return nn.functional.mse_loss(logits, actions, **kwargs)
+def loss_fn(logits, targets, **kwargs):
+    return nn.functional.mse_loss(logits, targets, **kwargs)
 
 
 def train(model: nn.Module, dataloader: torch.utils.data.DataLoader):
@@ -244,8 +248,19 @@ if __name__ == "__main__":
     config.get()
     # ds = MinariDataset(env_name="pen-human-v0")
     # env_name = "d4rl_hopper-expert-v2"
+    # env_name = "d4rl_halfcheetah-expert-v2"  # test with this to make sure its working
     env_name = "pointmaze-umaze-v0"
-    env_name = "d4rl_halfcheetah-expert-v2"  # test with this to make sure its working
+    env_name = "pointmaze-open-dense-v0"
+
+    # unless i update
+    datasets = [
+        "pointmaze-large-dense-v0",
+        "pointmaze-large-v0",
+        "pointmaze-medium-dense-v0",
+        "pointmaze-medium-v0",
+        "pointmaze-open-dense-v0",
+        "pointmaze-umaze-v0",
+    ]
 
     ds = MinariDataset(env_name=env_name)
 

@@ -1,4 +1,5 @@
 from typing import Optional
+from gymnasium import Env
 import torch
 import torch.nn as nn
 
@@ -52,6 +53,14 @@ class TransformerBlock(nn.Module):
         return x
 
 
+class EnvEmbedding(nn.Module):
+    def __init__(self, state_dim: int, action_dim: int, embedding_dim: int):
+        super().__init__()
+        self.state_emb = nn.Linear(state_dim, embedding_dim)
+        self.action_emb = nn.Linear(action_dim, embedding_dim)
+        self.return_emb = nn.Linear(1, embedding_dim)
+
+
 class DecisionTransformer(nn.Module):
     def __init__(
         self,
@@ -78,6 +87,8 @@ class DecisionTransformer(nn.Module):
         self.action_emb = nn.Linear(action_dim, embedding_dim)
         self.return_emb = nn.Linear(1, embedding_dim)
 
+        self.env_embs = nn.ModuleDict()
+
         self.blocks = nn.ModuleList(
             [
                 TransformerBlock(
@@ -90,6 +101,7 @@ class DecisionTransformer(nn.Module):
                 for _ in range(num_layers)
             ]
         )
+
         self.action_head = nn.Sequential(nn.Linear(embedding_dim, action_dim), nn.Tanh())
         self.seq_len = seq_len
         self.embedding_dim = embedding_dim
@@ -110,6 +122,14 @@ class DecisionTransformer(nn.Module):
             torch.nn.init.zeros_(module.bias)
             torch.nn.init.ones_(module.weight)
 
+    def make_env_emb(self, env: Env):
+        if env.spec.id not in self.env_embs:
+            self.env_embs[env.spec.id] = EnvEmbedding(
+                state_dim=env.observation_space.shape[0],
+                action_dim=env.action_space.shape[0],
+                embedding_dim=self.embedding_dim,
+            )
+
     def forward(
         self,
         states: torch.Tensor,  # [batch_size, seq_len, state_dim]
@@ -127,7 +147,7 @@ class DecisionTransformer(nn.Module):
 
         # [batch_size, seq_len * 3, emb_dim], (r_0, s_0, a_0, r_1, s_1, a_1, ...)
         sequence = (
-            torch.stack([state_emb, act_emb, returns_emb], dim=1).permute(0, 2, 1, 3).reshape(batch_size, 3 * seq_len, self.embedding_dim)
+            torch.stack([returns_emb, state_emb, act_emb], dim=1).permute(0, 2, 1, 3).reshape(batch_size, 3 * seq_len, self.embedding_dim)
         )
         if padding_mask is not None:
             # [batch_size, seq_len * 3], stack mask identically to fit the sequence
