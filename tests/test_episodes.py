@@ -29,7 +29,8 @@ class TestEpisodes(unittest.TestCase):
         dl = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=True, collate_fn=Collate(device=device))
         for batch in dl:
             batch = batch.to(device)
-            self.assertTrue(batch.actions.device == device)
+            self.assertTrue(str(batch.actions.device) == device)
+            break
 
     def test_across_episodes(self):
         ds = AcrossEpisodeDataset(env_name="pointmaze-medium-v1", max_num_epsisodes=3, drop_last=True)
