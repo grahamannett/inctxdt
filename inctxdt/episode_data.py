@@ -1,11 +1,20 @@
-from typing import Optional
+from typing import List, Optional
 
-from dataclasses import dataclass
+import torch
+from tensordict import tensorclass, TensorDict
+from dataclasses import dataclass, fields
 import numpy as np
 
 
 class EpisodeDataConfig:
     frozen: bool = False
+
+
+@dataclass
+class ObservationData:
+    observation: np.ndarray
+    achieved_goal: np.ndarray
+    desired_goal: np.ndarray
 
 
 @dataclass(frozen=EpisodeDataConfig.frozen)
@@ -15,9 +24,9 @@ class EpisodeData:
     This is the object returned by :class:`minari.MinariDataset.sample_episodes`.
     """
 
-    id: int
-    seed: Optional[int]
-    total_timesteps: int
+    id: int | List[int]
+    seed: Optional[int] | List[Optional[int]]
+    total_timesteps: int | List[int]
     observations: np.ndarray
     actions: np.ndarray
     rewards: np.ndarray
@@ -30,11 +39,12 @@ class EpisodeData:
 
     def __post_init__(self):
         if self.timesteps is None:
-            self.timesteps = np.arange(self.observations.shape[0])
+            self.timesteps = np.arange(self.total_timesteps)
 
     def __repr__(self) -> str:
         return (
             "EpisodeData("
+            f"env_name={repr(self.env_name)},"
             f"id={repr(self.id)}, "
             f"seed={repr(self.seed)}, "
             f"total_timesteps={self.total_timesteps}, "
@@ -62,10 +72,16 @@ class EpisodeData:
         else:
             return repr(value)
 
+    def combine(self, other: "EpisodeData") -> "EpisodeData":
+        for field in fields(self):
+            comb_field = [getattr(self, field.name), getattr(other, field.name)]
+
+            setattr(self, field.name, comb_field)
+        breakpoint()
+
 
 def make(frozen: bool = EpisodeDataConfig.frozen):
-    @dataclass(frozen=frozen)
-    class EpisodeData_(EpisodeData):
+    class EpisodeData(EpisodeData):
         pass
 
-    return EpisodeData_
+    return dataclass(frozen=frozen)(EpisodeData)

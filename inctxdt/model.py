@@ -60,6 +60,9 @@ class EnvEmbedding(nn.Module):
         self.action_emb = nn.Linear(action_dim, embedding_dim)
         self.return_emb = nn.Linear(1, embedding_dim)
 
+    # def forward(self, enb_batch: Batch):
+    #     pass
+
 
 class DecisionTransformer(nn.Module):
     def __init__(
@@ -141,14 +144,16 @@ class DecisionTransformer(nn.Module):
         batch_size, seq_len = states.shape[0], states.shape[1]
         # [batch_size, seq_len, emb_dim]
         time_emb = self.timestep_emb(time_steps)
-        state_emb = self.state_emb(states) + time_emb
+        obs_emb = self.state_emb(states) + time_emb
         act_emb = self.action_emb(actions) + time_emb
-        returns_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb
+        re_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb
 
         # [batch_size, seq_len * 3, emb_dim], (r_0, s_0, a_0, r_1, s_1, a_1, ...)
-        sequence = (
-            torch.stack([returns_emb, state_emb, act_emb], dim=1).permute(0, 2, 1, 3).reshape(batch_size, 3 * seq_len, self.embedding_dim)
-        )
+        # sequence = (
+        #     torch.stack([returns_emb, state_emb, act_emb], dim=1).permute(0, 2, 1, 3).reshape(batch_size, 3 * seq_len, self.embedding_dim)
+        # )
+        sequence = torch.stack([obs_emb, re_emb, act_emb], dim=1).permute(0, 2, 1, 3).reshape(batch_size, 3 * seq_len, self.embedding_dim)
+
         if padding_mask is not None:
             # [batch_size, seq_len * 3], stack mask identically to fit the sequence
             padding_mask = torch.stack([padding_mask, padding_mask, padding_mask], dim=1).permute(0, 2, 1).reshape(batch_size, 3 * seq_len)
