@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 from inctxdt.evaluation import eval_rollout
 from inctxdt.model import DecisionTransformer
 from inctxdt.batch import Batch
+from inctxdt.datasets import MinariDataset
 
 
 class config:

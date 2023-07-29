@@ -1,8 +1,9 @@
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import minari
 import numpy as np
+from torch.utils.data import Dataset
 from minari.storage.datasets_root_dir import get_dataset_path
 from inctxdt.episode_data import EpisodeData
 
@@ -15,9 +16,17 @@ def discounted_cumsum(x: np.ndarray, gamma: float) -> np.ndarray:
     return cumsum
 
 
+def _get_data_path_from_env_name(env_name: str) -> str:
+    if env_name not in minari.list_local_datasets():
+        minari.download_dataset(env_name)
+    file_path = get_dataset_path(env_name)
+    data_path = os.path.join(file_path, "data", "main_data.hdf5")
+    return data_path
+
+
 class MinariDataset(minari.MinariDataset):
     def __init__(self, env_name: str, seq_len: int = None):
-        data_path = self._get_data_path_from_env_name(env_name)
+        data_path = _get_data_path_from_env_name(env_name)
         super().__init__(data=data_path)
 
         self.env_name = env_name
@@ -31,13 +40,6 @@ class MinariDataset(minari.MinariDataset):
         episode = self._fix_episode(episode)
         return EpisodeData(**episode)
 
-    def _get_data_path_from_env_name(self, env_name: str) -> str:
-        if env_name not in minari.list_local_datasets():
-            minari.download_dataset(env_name)
-        file_path = get_dataset_path(env_name)
-        data_path = os.path.join(file_path, "data", "main_data.hdf5")
-        return data_path
-
     def _fix_episode(self, episode_data: Dict[str, Any]) -> Dict[str, Any]:
         if self.seq_len:
             raise NotImplementedError
@@ -47,6 +49,8 @@ class MinariDataset(minari.MinariDataset):
 
         episode_data["returns_to_go"] = discounted_cumsum(episode_data["rewards"], gamma=1.0)
         episode_data["mask"] = np.ones(episode_data["total_timesteps"])
+
+        # concatenate episode data
         episode_data["observations"] = np.concatenate(list(episode_data["observations"].values()), axis=-1)
         episode_data["env_name"] = self.env_name
         return episode_data
@@ -58,17 +62,16 @@ class AcrossEpisodeDataset(MinariDataset):
         self.max_num_episodes = max_num_epsisodes
         self.drop_last = drop_last
 
-    def __getitem__(self, idx: int) -> Any:
+    def _get_after_episodes(self, idx: int):
         ep_idxs = self.episode_indices[idx : idx + self.max_num_episodes]
+        eps = [super(AcrossEpisodeDataset, self).__getitem__(i) for i in self.ep_idxs]
 
+    def __getitem__(self, idx: int) -> Any:
         # eps = []
         # for ep_idx in ep_idxs:
         #     # ep = super().__getitem__(ep_idx, output_cls=dict)
 
-        eps_out = defaultdict(list)
-
-        ep1 = super().__getitem__(ep_idxs[0])
-        ep2 = super().__getitem__(ep_idxs[1])
+        ep1 = super().__getitem__(ep_idxs)
 
         ep = ep1.combine(ep2)
 
@@ -97,3 +100,28 @@ class AcrossEpisodeDataset(MinariDataset):
             episodes.append(episode)
             to_get -= 1
         return episodes
+
+
+class MultipleMinariDataset(Dataset):
+    """requires that the datasets share properties"""
+
+    def __init__(self, datasets: List[MinariDataset]):
+        self.datasets = datasets
+        self.dataset_indices = []
+        self._generate_indexes()
+
+    def __len__(self):
+        return len(self.dataset_indices)
+
+    def __getitem__(self, index) -> Any:
+        ds_idx, ep_idx = self.dataset_indices[index]
+        return self.datasets[ds_idx][ep_idx]
+
+    def _generate_indexes(self):
+        for i, ds in enumerate(self.datasets):
+            self.dataset_indices.extend([(i, j) for j in range(len(ds))])
+
+    def _validate_datasets(self):
+        samples = [ds[0] for ds in self.datasets]
+        for i, sample in enumerate(samples):
+            pass
