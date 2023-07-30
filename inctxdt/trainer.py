@@ -1,11 +1,9 @@
 from typing import Tuple
 
-import minari
-import numpy as np
 import torch
 import torch.nn as nn
 
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 
 from inctxdt.evaluation import eval_rollout
 from inctxdt.model import DecisionTransformer
@@ -50,6 +48,8 @@ def train(
     model: nn.Module, dataloader: torch.utils.data.DataLoader, config: config = config
 ):
     model = model.to(config.device)
+    env = dataloader.dataset.recover_environment()
+
     optim = torch.optim.AdamW(
         model.parameters(),
         lr=config.learning_rate,
