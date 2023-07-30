@@ -19,7 +19,9 @@ class TransformerBlock(nn.Module):
         self.norm2 = nn.LayerNorm(embedding_dim)
         self.drop = nn.Dropout(residual_dropout)
 
-        self.attention = nn.MultiheadAttention(embedding_dim, num_heads, attention_dropout, batch_first=True)
+        self.attention = nn.MultiheadAttention(
+            embedding_dim, num_heads, attention_dropout, batch_first=True
+        )
         self.mlp = nn.Sequential(
             nn.Linear(embedding_dim, 4 * embedding_dim),
             nn.GELU(),
@@ -31,9 +33,13 @@ class TransformerBlock(nn.Module):
         self.seq_len = seq_len
 
     # [batch_size, seq_len, emb_dim] -> [batch_size, seq_len, emb_dim]
-    def forward(self, x: torch.Tensor, padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, padding_mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         # causal_mask = self.causal_mask[: x.shape[1], : x.shape[1]]
-        causal_mask = ~torch.tril(torch.ones(x.shape[1], x.shape[1])).to(bool).to(x.device)
+        causal_mask = (
+            ~torch.tril(torch.ones(x.shape[1], x.shape[1])).to(bool).to(x.device)
+        )
 
         norm_x = self.norm1(x)
         attention_out = self.attention(
@@ -105,7 +111,9 @@ class DecisionTransformer(nn.Module):
             ]
         )
 
-        self.action_head = nn.Sequential(nn.Linear(embedding_dim, action_dim), nn.Tanh())
+        self.action_head = nn.Sequential(
+            nn.Linear(embedding_dim, action_dim), nn.Tanh()
+        )
         self.seq_len = seq_len
         self.embedding_dim = embedding_dim
         self.state_dim = state_dim
@@ -139,13 +147,14 @@ class DecisionTransformer(nn.Module):
         actions: torch.Tensor,  # [batch_size, seq_len, action_dim]
         returns_to_go: torch.Tensor,  # [batch_size, seq_len]
         time_steps: torch.Tensor,  # [batch_size, seq_len]
+        mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
         padding_mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
     ) -> torch.FloatTensor:
         batch_size, seq_len = states.shape[0], states.shape[1]
         # [batch_size, seq_len, emb_dim]
         time_emb = self.timestep_emb(time_steps)
 
-        obs_emb = self.state_emb(states) + time_emb
+        obs_emb = self.state_emb(states[:, : time_steps.size(1)]) + time_emb
         act_emb = self.action_emb(actions) + time_emb
         re_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb
 
@@ -153,11 +162,22 @@ class DecisionTransformer(nn.Module):
         # sequence = (
         #     torch.stack([returns_emb, state_emb, act_emb], dim=1).permute(0, 2, 1, 3).reshape(batch_size, 3 * seq_len, self.embedding_dim)
         # )
-        sequence = torch.stack([obs_emb, re_emb, act_emb], dim=1).permute(0, 2, 1, 3).reshape(batch_size, 3 * seq_len, self.embedding_dim)
+        sequence = (
+            torch.stack([obs_emb, re_emb, act_emb], dim=1)
+            .permute(0, 2, 1, 3)
+            .reshape(batch_size, 3 * seq_len, self.embedding_dim)
+        )
+
+        if mask is not None:
+            padding_mask = ~mask.to(torch.bool)
 
         if padding_mask is not None:
             # [batch_size, seq_len * 3], stack mask identically to fit the sequence
-            padding_mask = torch.stack([padding_mask, padding_mask, padding_mask], dim=1).permute(0, 2, 1).reshape(batch_size, 3 * seq_len)
+            padding_mask = (
+                torch.stack([padding_mask, padding_mask, padding_mask], dim=1)
+                .permute(0, 2, 1)
+                .reshape(batch_size, 3 * seq_len)
+            )
         # LayerNorm and Dropout (!!!) as in original implementation,
         # while minGPT & huggingface uses only embedding dropout
         out = self.emb_norm(sequence)

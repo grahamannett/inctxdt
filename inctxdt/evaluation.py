@@ -18,15 +18,20 @@ def eval_rollout(
     target_return: float,
     device: str = "cpu",
 ) -> Tuple[float, float]:
-    states = torch.zeros(1, model.episode_len + 1, model.state_dim, dtype=torch.float, device=device)
-    actions = torch.zeros(1, model.episode_len, model.action_dim, dtype=torch.float, device=device)
+    states = torch.zeros(
+        1, model.episode_len + 1, model.state_dim, dtype=torch.float, device=device
+    )
+    actions = torch.zeros(
+        1, model.episode_len, model.action_dim, dtype=torch.float, device=device
+    )
     returns = torch.zeros(1, model.episode_len + 1, dtype=torch.float, device=device)
 
     time_steps = torch.arange(model.episode_len, dtype=torch.long, device=device)
     time_steps = time_steps.view(1, -1)
 
     if isinstance(states_init := env.reset()[0], dict):
-        states_init = flatten_obs_dict(states_init)
+        # states_init = flatten_obs_dict(states_init)
+        states_init = states_init["observation"]
 
     states[:, 0] = torch.as_tensor(states_init, device=device)
     returns[:, 0] = torch.as_tensor(target_return, device=device)
@@ -44,10 +49,13 @@ def eval_rollout(
             time_steps[:, : step + 1][:, -model.seq_len :],  # noqa
         )
         predicted_action = predicted_actions[0, -1].cpu().numpy()
-        next_state, reward, terminated, truncated, info = env_step = env.step(predicted_action)
+        next_state, reward, terminated, truncated, info = env_step = env.step(
+            predicted_action
+        )
 
         if isinstance(next_state, dict):
-            next_state = flatten_obs_dict(next_state)
+            # next_state = flatten_obs_dict(next_state)
+            next_state = next_state["observation"]
 
         done = terminated or truncated
         # next_state, reward, done, info = env.step(predicted_action)

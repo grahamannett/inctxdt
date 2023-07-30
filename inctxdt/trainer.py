@@ -50,6 +50,9 @@ def train(
     model = model.to(config.device)
     env = dataloader.dataset.recover_environment()
 
+    if config.device == "cuda":
+        dist_model = torch.nn.DataParallel(model)
+
     optim = torch.optim.AdamW(
         model.parameters(),
         lr=config.learning_rate,
@@ -63,17 +66,16 @@ def train(
 
     for epoch in range(config.epochs):
         print(f"Epoch {epoch}")
-        model.train()
+        dist_model.train()
         epoch_loss = 0
         for batch_idx, batch in enumerate(dataloader):
-            padding_mask = ~batch.mask.to(torch.bool)
-
-            predicted_actions = model.forward(
+            batch = batch.to(config.device)
+            predicted_actions = dist_model.forward(
                 states=batch.observations,
                 actions=batch.actions,
                 returns_to_go=batch.returns_to_go,
                 time_steps=batch.timesteps,
-                padding_mask=padding_mask,
+                mask=batch.mask,
             )
 
             loss = loss_fn(predicted_actions, batch.actions, reduction="none")
@@ -81,7 +83,9 @@ def train(
             loss.backward()
 
             if config.clip_grad is not None:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), config.clip_grad)
+                torch.nn.utils.clip_grad_norm_(
+                    dist_model.parameters(), config.clip_grad
+                )
             optim.step()
             scheduler.step()
 
