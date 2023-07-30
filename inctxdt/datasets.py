@@ -6,10 +6,11 @@ import numpy as np
 from torch.utils.data import Dataset
 from minari.storage.datasets_root_dir import get_dataset_path
 from inctxdt.episode_data import EpisodeData
+from functools import reduce
 
 
-def discounted_cumsum(x: np.ndarray, gamma: float) -> np.ndarray:
-    cumsum = np.zeros_like(x)
+def discounted_cumsum(x: np.ndarray, gamma: float, dtype: np.dtype | str = np.float32) -> np.ndarray:
+    cumsum = np.zeros_like(x, dtype=dtype)
     cumsum[-1] = x[-1]
     for t in reversed(range(x.shape[0] - 1)):
         cumsum[t] = x[t] + gamma * cumsum[t + 1]
@@ -37,22 +38,31 @@ class MinariDataset(minari.MinariDataset):
 
     def __getitem__(self, idx: int):
         episode = self._data.get_episodes([self.episode_indices[idx]])[0]
-        episode = self._fix_episode(episode)
-        return EpisodeData(**episode)
+        episode = EpisodeData(**self._fix_episode(episode))
+        return episode
 
     def _fix_episode(self, episode_data: Dict[str, Any]) -> Dict[str, Any]:
         if self.seq_len:
             raise NotImplementedError
 
+        episode_data["env_name"] = self.env_name
+
         if episode_data["seed"] == "None":
             episode_data["seed"] = None
 
-        episode_data["returns_to_go"] = discounted_cumsum(episode_data["rewards"], gamma=1.0)
-        episode_data["mask"] = np.ones(episode_data["total_timesteps"])
+        episode_data["returns_to_go"] = discounted_cumsum(episode_data["rewards"], gamma=1.0, dtype=np.float32)
+        episode_data["mask"] = np.ones(episode_data["total_timesteps"], dtype=np.float32)
+        episode_data["timesteps"] = np.arange(episode_data["total_timesteps"])
 
+        # dont do this as i dont know if the other fields are useful or what they mean
         # concatenate episode data
-        episode_data["observations"] = np.concatenate(list(episode_data["observations"].values()), axis=-1)
-        episode_data["env_name"] = self.env_name
+        # episode_data["observations"] = np.concatenate(list(episode_data["observations"].values()), axis=-1, dtype=np.float32)
+
+        # fix dtypes of others
+        episode_data["observations"] = episode_data["observations"]["observation"][:-1].astype(np.float32)
+        episode_data["actions"] = episode_data["actions"].astype(np.float32)
+        episode_data["rewards"] = episode_data["rewards"].astype(np.float32)
+
         return episode_data
 
 
@@ -62,44 +72,12 @@ class AcrossEpisodeDataset(MinariDataset):
         self.max_num_episodes = max_num_epsisodes
         self.drop_last = drop_last
 
-    def _get_after_episodes(self, idx: int):
-        ep_idxs = self.episode_indices[idx : idx + self.max_num_episodes]
-        eps = [super(AcrossEpisodeDataset, self).__getitem__(i) for i in self.ep_idxs]
+        # just make it so we can always cycle through the episodes
+        self.possible_idxs = np.append(self.episode_indices, self.episode_indices[0 : self.max_num_episodes - 1])
 
     def __getitem__(self, idx: int) -> Any:
-        # eps = []
-        # for ep_idx in ep_idxs:
-        #     # ep = super().__getitem__(ep_idx, output_cls=dict)
-
-        ep1 = super().__getitem__(ep_idxs)
-
-        ep = ep1.combine(ep2)
-
-        breakpoint()
-        eps = [super(AcrossEpisodeDataset, self).__getitem__(i, dict) for i in ep_idxs]
-
-        for k, v in eps[0].items():
-            eps_out[k] = np.concatenate([ep[k] for ep in eps], axis=0) if isinstance(v, (np.ndarray, int, float)) else [ep[k] for ep in eps]
-        breakpoint()
-
-        # episodes = [super().__getitem__(ep_idx, output_cls=dict) for ep_idx in ep_idxs]
-
-        # ep_idxs = [self.ds.episode_indices[idx : idx + self.max_num_episodes]]
-        episode_data = self.ds._data.get_episodes(*ep_idxs)
-
-        to_get = self.max_num_episodes
-        episodes = [super().__getitem__(idx, output_cls=dict)]
-
-        while to_get > 0:
-            if (idx := idx + 1) >= len(self):
-                if self.drop_last:
-                    break
-                idx = 0
-
-            episode = super().__getitem__(idx, output_cls=dict)
-            episodes.append(episode)
-            to_get -= 1
-        return episodes
+        eps = [super(AcrossEpisodeDataset, self).__getitem__(i) for i in self.possible_idxs[idx : idx + self.max_num_episodes]]
+        return EpisodeData.combine(eps)
 
 
 class MultipleMinariDataset(Dataset):

@@ -1,7 +1,6 @@
 from typing import List, Optional
 
 import torch
-from tensordict import tensorclass, TensorDict
 from dataclasses import dataclass, fields
 import numpy as np
 
@@ -39,7 +38,7 @@ class EpisodeData:
 
     def __post_init__(self):
         if self.timesteps is None:
-            self.timesteps = np.arange(self.total_timesteps)
+            self.timesteps = np.arange(max(self.total_timesteps, len(self.observations)))
 
     def __repr__(self) -> str:
         return (
@@ -72,12 +71,24 @@ class EpisodeData:
         else:
             return repr(value)
 
-    def combine(self, other: "EpisodeData") -> "EpisodeData":
-        for field in fields(self):
-            comb_field = [getattr(self, field.name), getattr(other, field.name)]
+    @classmethod
+    def combine(cls, episodes: List["EpisodeData"], skip_fields: List[str] = ["env_name"]) -> "EpisodeData":
+        if len(env_names := set([ep.env_name for ep in episodes])) > 1:
+            raise ValueError(f"Cannot combine episodes from different environments: {env_names}")
 
-            setattr(self, field.name, comb_field)
-        breakpoint()
+        out_ep = {"env_name": env_names.pop()}
+
+        for field in fields(episodes[0]):
+            if field.name in skip_fields:
+                continue
+
+            comb_field = [getattr(ep, field.name) for ep in episodes]
+            if isinstance(comb_field[0], np.ndarray):
+                comb_field = np.concatenate(comb_field, axis=0)
+
+            out_ep[field.name] = comb_field
+
+        return cls(**out_ep)
 
 
 def make(frozen: bool = EpisodeDataConfig.frozen):

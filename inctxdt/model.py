@@ -144,6 +144,7 @@ class DecisionTransformer(nn.Module):
         batch_size, seq_len = states.shape[0], states.shape[1]
         # [batch_size, seq_len, emb_dim]
         time_emb = self.timestep_emb(time_steps)
+
         obs_emb = self.state_emb(states) + time_emb
         act_emb = self.action_emb(actions) + time_emb
         re_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb

@@ -46,7 +46,7 @@ def loss_fn(logits, targets, **kwargs):
     return nn.functional.mse_loss(logits, targets, **kwargs)
 
 
-def train(model: nn.Module, dataloader: torch.utils.data.DataLoader):
+def train(model: nn.Module, dataloader: torch.utils.data.DataLoader, config: config = config):
     model = model.to(config.device)
     optim = torch.optim.AdamW(
         model.parameters(),
@@ -86,6 +86,8 @@ def train(model: nn.Module, dataloader: torch.utils.data.DataLoader):
             epoch_loss += loss.item()
             if batch_idx % 100 == 0:
                 print(f"batch-idx:{batch_idx}/{len(dataloader)} | epoch-loss: {epoch_loss:.4f}")
+
+            break
 
         eval_info = eval_rollout(model, env=env, target_return=1000.0, device=config.device)
         print(f"Eval: {eval_info}")
