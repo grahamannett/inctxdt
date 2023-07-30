@@ -46,7 +46,9 @@ def loss_fn(logits, targets, **kwargs):
     return nn.functional.mse_loss(logits, targets, **kwargs)
 
 
-def train(model: nn.Module, dataloader: torch.utils.data.DataLoader, config: config = config):
+def train(
+    model: nn.Module, dataloader: torch.utils.data.DataLoader, config: config = config
+):
     model = model.to(config.device)
     optim = torch.optim.AdamW(
         model.parameters(),
@@ -85,11 +87,13 @@ def train(model: nn.Module, dataloader: torch.utils.data.DataLoader, config: con
 
             epoch_loss += loss.item()
             if batch_idx % 100 == 0:
-                print(f"batch-idx:{batch_idx}/{len(dataloader)} | epoch-loss: {epoch_loss:.4f}")
+                print(
+                    f"batch-idx:{batch_idx}/{len(dataloader)} | epoch-loss: {epoch_loss:.4f}"
+                )
 
-            break
-
-        eval_info = eval_rollout(model, env=env, target_return=1000.0, device=config.device)
+        eval_info = eval_rollout(
+            model, env=env, target_return=1000.0, device=config.device
+        )
         print(f"Eval: {eval_info}")
 
 
@@ -125,5 +129,7 @@ if __name__ == "__main__":
     state_dim = sample.observations.shape[-1]
     action_dim = sample.actions.shape[-1]
 
-    model = DecisionTransformer(state_dim=state_dim, action_dim=action_dim, embedding_dim=128, num_layers=6)
+    model = DecisionTransformer(
+        state_dim=state_dim, action_dim=action_dim, embedding_dim=128, num_layers=6
+    )
     train(model, dataloader)
