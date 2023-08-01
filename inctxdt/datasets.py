@@ -3,10 +3,10 @@ from typing import Any, Dict, List
 
 import minari
 import numpy as np
-from torch.utils.data import Dataset
 from minari.storage.datasets_root_dir import get_dataset_path
+from torch.utils.data import Dataset
+
 from inctxdt.episode_data import EpisodeData
-from functools import reduce
 
 
 def discounted_cumsum(

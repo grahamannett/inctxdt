@@ -1,5 +1,6 @@
 from typing import NamedTuple, Tuple
 import torch
+from distutils.util import strtobool
 
 _warned_attrs = set()
 
@@ -17,10 +18,10 @@ class config_tool:
     device: str = "cpu"
 
     epochs: int = 1
-    batch_size: int = 4
+    batch_size: int = 32
 
-    dist: bool = False  # pytorch distributed
     adist: bool = False  # accelerate distributed
+    dist: bool = False  # pytorch distributed
 
     # optim
     learning_rate: float = 1e-4
@@ -66,6 +67,12 @@ class config_tool:
                     field = field[2:]
                     if val.isdigit():
                         val = float(val)
+                    elif val.lower() in (
+                        "true",
+                        "false",
+                    ):
+                        val = bool(strtobool(val))
+
                     parser.add_argument(f"--{field}", default=val, type=type(val))
             args, extra = parser.parse_known_args()
 

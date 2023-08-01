@@ -1,8 +1,7 @@
 from typing import Callable, Dict, List, Optional
 
-from tensordict import TensorDict, tensorclass
-
 import torch
+from tensordict import TensorDict, tensorclass
 
 from inctxdt.episode_data import EpisodeData
 

@@ -2,7 +2,8 @@ from typing import Dict, NamedTuple, Tuple
 
 import numpy as np
 import torch
-from gymnasium import Env
+
+# from gymnasium import Env
 from inctxdt.model import DecisionTransformer
 
 
@@ -14,7 +15,7 @@ def flatten_obs_dict(obs_dict: Dict[str, np.array]) -> np.array:
 @torch.no_grad()
 def eval_rollout(
     model: DecisionTransformer,
-    env: Env,
+    env: "Env",
     env_spec: NamedTuple,
     target_return: float,
     device: str = "cpu",
@@ -48,14 +49,15 @@ def eval_rollout(
         # first select history up to step, then select last seq_len states,
         # step + 1 as : operator is not inclusive, last action is dummy with zeros
         # (as model will predict last, actual last values are not important)
-        predicted_actions = model(  # fix this noqa!!!
+
+        model_output = model(  # fix this noqa!!!
             states[:, : step + 1][:, -env_spec.seq_len :],  # noqa
             actions[:, : step + 1][:, -env_spec.seq_len :],  # noqa
             returns[:, : step + 1][:, -env_spec.seq_len :],  # noqa
             time_steps[:, : step + 1][:, -env_spec.seq_len :],  # noqa
         )
+        predicted_actions = model_output.logits.view(1, -1, env_spec.action_dim)
         predicted_action = predicted_actions[0, -1].cpu().numpy()
-        breakpoint()
 
         # unpack
         next_state, reward, *term_trunc, info = env.step(predicted_action)

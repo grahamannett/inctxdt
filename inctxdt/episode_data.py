@@ -1,6 +1,5 @@
 from typing import List, Optional
 
-import torch
 from dataclasses import dataclass, fields, field
 import numpy as np
 

@@ -1,21 +1,15 @@
-from typing import Callable, Tuple
+from typing import Tuple
 
 import torch
 import torch.nn as nn
 
 from tqdm.auto import tqdm, trange
 
-from gymnasium import Env
+# from gymnasium import Env
 
 from inctxdt.evaluation import eval_rollout
-from inctxdt.model import DecisionTransformer
 from inctxdt.batch import Batch
-from inctxdt.datasets import MinariDataset
 from inctxdt.config import config_tool, EnvSpec
-
-
-def loss_fn(logits, targets, **kwargs):
-    return nn.functional.mse_loss(logits, targets, **kwargs)
 
 
 def train(
@@ -23,7 +17,9 @@ def train(
     dataloader: torch.utils.data.DataLoader,
     config: config_tool = config_tool,
     accelerator: type = None,
-    env: Env = None,  # noqa
+    env: "Env" = None,  # noqa
+    optimizer: torch.optim.Optimizer = None,
+    scheduler: torch.optim.lr_scheduler.LambdaLR = None,
 ):
     if env is None:
         env = dataloader.dataset.recover_environment()
@@ -34,17 +30,18 @@ def train(
     device = config.device
     _main_proc = accelerator.is_local_main_process if accelerator else True
 
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config.learning_rate,
-        weight_decay=config.weight_decay,
-        betas=config.betas,
-    )
+    if optimizer is None:
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay,
+            betas=config.betas,
+        )
 
-    scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer,
-        lambda steps: min((steps + 1) / config.warmup_steps, 1),
-    )
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lambda steps: min((steps + 1) / config.warmup_steps, 1),
+        )
 
     if accelerator:
         model, dataloader, optimizer, scheduler = accelerator.prepare(
@@ -52,7 +49,6 @@ def train(
         )
         device = accelerator.device
     else:
-        model = torch.nn.DataParallel(model)
         model = model.to(config.device)
 
     def data_iter_fn(batch_iter) -> Tuple[int, Batch]:
@@ -69,10 +65,16 @@ def train(
         return batch
 
     def handle_loss(pred, batch) -> torch.Tensor:
-        loss = loss_fn(pred, batch.actions, reduction="none")
-        loss = (loss * batch.mask.unsqueeze(-1)).mean()
+        target, mask = batch.actions, batch.mask
 
-        if accelerator is not None:
+        # for mse we need
+        if pred.shape != target.shape:
+            pred = pred.view(target.shape)
+
+        loss = nn.functional.mse_loss(pred, target, reduction="none")
+        loss = (loss * mask.unsqueeze(-1)).mean()
+
+        if accelerator:
             accelerator.backward(loss)
         else:
             loss.backward()
@@ -85,9 +87,7 @@ def train(
         optimizer.step()
         scheduler.step()
 
-    epoch_pbar = trange(
-        config.epochs, desc=f"Epoch", disable=not _main_proc, leave=False
-    )
+    epoch_pbar = trange(config.epochs, desc=f"Epoch", disable=not _main_proc, leave=False)
 
     for epoch in epoch_pbar:
         model.train()
@@ -98,7 +98,7 @@ def train(
         for batch_idx, batch in data_iter_fn(enumerate(pbar)):
             batch = handle_batch(batch)
 
-            predicted_actions = model.forward(
+            model_output = model.forward(
                 states=batch.observations,
                 actions=batch.actions,
                 returns_to_go=batch.returns_to_go,
@@ -106,7 +106,7 @@ def train(
                 mask=batch.mask,
             )
 
-            loss = handle_loss(predicted_actions, batch)
+            loss = handle_loss(model_output.logits, batch)
             post_handle_loss(model)
 
             epoch_loss += loss.item()

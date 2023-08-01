@@ -1,14 +1,16 @@
 import torch
 import torch.nn as nn
-from gymnasium import Env
 
-from episode_data import EpisodeData
+from inctxdt.episode_data import EpisodeData
 
 
 class EnvEmbedding(nn.Module):
-    def __init__(self, env: Env, embedding_dim: int, episode_len: int = 1000):
+    def __init__(self, env: "Env", embedding_dim: int, episode_len: int = 1000):
         super().__init__()
-        state_dim, action_dim = env.observation_space.shape[0], env.action_space.shape[0]
+        state_dim, action_dim = (
+            env.observation_space.shape[0],
+            env.action_space.shape[0],
+        )
 
         self.embedding_dict = nn.ModuleDict(
             {
@@ -29,12 +31,16 @@ class EnvEmbedding(nn.Module):
         embs = {
             "observations": self.embedding_dict["observations"](samples.observations),
             "actions": self.embedding_dict["actions"](samples.actions),
-            "rewards": self.embedding_dict["rewards"](samples.returns_to_go.unsqueeze(-1)),
+            "rewards": self.embedding_dict["rewards"](
+                samples.returns_to_go.unsqueeze(-1)
+            ),
             "timesteps": self.embedding_dict["timesteps"](samples.timesteps),
         }
         observation_embs = self.embedding_dict["observations"](samples.observations)
         action_embs = self.embedding_dict["actions"](samples.actions)
-        reward_embs = self.embedding_dict["rewards"](samples.returns_to_go.unsqueeze(-1))
+        reward_embs = self.embedding_dict["rewards"](
+            samples.returns_to_go.unsqueeze(-1)
+        )
         timestep_embs = self.embedding_dict["timesteps"](samples.timesteps)
 
         reward_embs += timestep_embs[:, 1:, :]
@@ -67,7 +73,9 @@ class Model(nn.Module):
         self.env_embedding = EnvEmbedding(env, embedding_dim=embedding_dim)
         self.head = nn.Linear(embedding_dim, env.action_space.shape[0])
 
-        self.transformer = nn.TransformerDecoder(nn.TransformerDecoderLayer(d_model=embedding_dim, nhead=4), num_layers=3)
+        self.transformer = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(d_model=embedding_dim, nhead=4), num_layers=3
+        )
 
     def forward(self, episode):
         emb = self.env_embedding(episode)

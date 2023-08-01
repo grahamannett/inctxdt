@@ -1,15 +1,14 @@
-from tqdm import trange
-from typing import Union, Tuple, DefaultDict, Dict, Any, List
-from collections import defaultdict
-
-import numpy as np
-from torch.utils.data import DataLoader, IterableDataset, Dataset
 import random
-
-from inctxdt.episode_data import EpisodeData
+from collections import defaultdict
+from typing import Any, DefaultDict, Dict, List, Tuple, Union
 
 import gym
-import d4rl
+import d4rl  # put import for d4rl after gym.  its required
+import numpy as np
+from torch.utils.data import Dataset, IterableDataset
+from tqdm import trange
+
+from inctxdt.episode_data import EpisodeData
 
 
 def wrap_env(
@@ -157,7 +156,7 @@ class D4rlDataset(BaseD4RLDataset):
         )
 
 
-class IterableD4rlDataset(BaseD4RLDataset):
+class IterableD4rlDataset(BaseD4RLDataset, IterableDataset):
     def __iter__(self):
         while True:
             traj_idx = np.random.choice(len(self.dataset), p=self.sample_prob)

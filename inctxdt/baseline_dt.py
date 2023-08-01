@@ -1,15 +1,19 @@
 from typing import Optional
-
-# from gymnasium import Env
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from inctxdt.model_output import ModelOutput
 
 
 # Decision Transformer implementation
 class TransformerBlock(nn.Module):
+    """TransformerBlock class.
+    from:
+    https://github.com/tinkoff-ai/CORL/blob/main/algorithms/offline/dt.py
+
+    main modification is the causal mask might need to be dynamic
+    """
+
     def __init__(
         self,
         seq_len: int,
@@ -70,18 +74,14 @@ class TransformerBlock(nn.Module):
         return x
 
 
-class EnvEmbedding(nn.Module):
-    def __init__(self, state_dim: int, action_dim: int, embedding_dim: int):
-        super().__init__()
-        self.state_emb = nn.Linear(state_dim, embedding_dim)
-        self.action_emb = nn.Linear(action_dim, embedding_dim)
-        self.return_emb = nn.Linear(1, embedding_dim)
-
-    # def forward(self, enb_batch: Batch):
-    #     pass
-
-
 class DecisionTransformer(nn.Module):
+    """DecisionTransformer class.
+    from:
+    https://github.com/tinkoff-ai/CORL/blob/main/algorithms/offline/dt.py
+
+    main difference is we might need to intake batch and output is a ModelOutput
+    """
+
     def __init__(
         self,
         state_dim: int,
@@ -95,7 +95,6 @@ class DecisionTransformer(nn.Module):
         residual_dropout: float = 0.0,
         embedding_dropout: float = 0.0,
         max_action: float = 1.0,
-        use_single_action_head: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -124,24 +123,9 @@ class DecisionTransformer(nn.Module):
             ]
         )
 
-        self._use_single_action_head = use_single_action_head
-
-        if not use_single_action_head:
-            self._multi_action_head_mods = nn.Sequential(
-                nn.Linear(embedding_dim, action_dim), nn.Tanh()
-            )
-
-            self.action_head = self.multi_action_head
-
-        else:
-            self.single_action_head_mods = nn.ModuleDict(
-                {
-                    "norm": nn.LayerNorm(embedding_dim),
-                    "head": nn.Linear(embedding_dim, 1),
-                    "activation": nn.Tanh(),
-                }
-            )
-            self.action_head = self.single_action_head
+        self.action_head = nn.Sequential(
+            nn.Linear(embedding_dim, action_dim), nn.Tanh()
+        )
 
         self.seq_len = seq_len
         self.embedding_dim = embedding_dim
@@ -162,30 +146,33 @@ class DecisionTransformer(nn.Module):
             torch.nn.init.zeros_(module.bias)
             torch.nn.init.ones_(module.weight)
 
-    def make_env_emb(self, env: "Env"):
-        if env.spec.id not in self.env_embs:
-            self.env_embs[env.spec.id] = EnvEmbedding(
-                state_dim=env.observation_space.shape[0],
-                action_dim=env.action_space.shape[0],
-                embedding_dim=self.embedding_dim,
-            )
-
-    def multi_action_head(self, x: torch.Tensor, **kwargs):
-        return self._multi_action_head_mods(self.out_norm(x)[:, 1::3])
-
-    def single_action_head(
+    def configure_optimizers(
         self,
-        x: torch.Tensor,
-        act_dim: int = None,  # number of actions needed per pred step
-        seq_len: int = None,
-    ) -> torch.Tensor:
-        act_dim = act_dim or self.action_dim
-        seq_len = seq_len or (x.shape[1] // 3)
+        learning_rate: float = 1e-3,
+        weight_decay: float = 0.0,
+        betas: tuple = (0.9, 0.999),
+    ) -> torch.optim.Optimizer:
+        """
+        This long function is unfortunately doing something very simple and is being very defensive:
+        We are separating out all parameters of the model into two buckets: those that will experience
+        weight decay for regularization and those that won't (biases, and layernorm/embedding weights).
+        We are then returning the PyTorch optimizer object.
+        """
 
-        x = F.adaptive_avg_pool2d(x, (act_dim * seq_len, self.embedding_dim))
-        x = self.single_action_head_mods["norm"](x)
-        x = self.single_action_head_mods["head"](x)
-        return self.single_action_head_mods["activation"](x)
+        # to do this you want to use something like the following:
+        # https://github.com/Howuhh/faster-trajectory-transformer/blob/main/trajectory/utils/common.py
+        # note: these are all based on karpathy gpt
+        raise NotImplementedError(
+            "configure_optimizers not implemented  because the decay/nodecay stuff is more work for not much gain"
+        )
+
+    def configure_scheduler(
+        self, optimizer: torch.optim.Optimizer, warmup_steps: int
+    ) -> torch.optim.lr_scheduler.LRScheduler:
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lambda steps: min((steps + 1) / warmup_steps, 1)
+        )
+        return scheduler
 
     def forward(
         self,
@@ -205,11 +192,8 @@ class DecisionTransformer(nn.Module):
         re_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb
 
         # [batch_size, seq_len * 3, emb_dim], (r_0, s_0, a_0, r_1, s_1, a_1, ...)
-        # sequence = (
-        #     torch.stack([returns_emb, state_emb, act_emb], dim=1).permute(0, 2, 1, 3).reshape(batch_size, 3 * seq_len, self.embedding_dim)
-        # )
         sequence = (
-            torch.stack([obs_emb, re_emb, act_emb], dim=1)
+            torch.stack([re_emb, obs_emb, act_emb], dim=1)
             .permute(0, 2, 1, 3)
             .reshape(batch_size, 3 * seq_len, self.embedding_dim)
         )
@@ -233,32 +217,75 @@ class DecisionTransformer(nn.Module):
             out = block(out, padding_mask=padding_mask)
 
         # should be action dim
-        # output1 = self.single_action_head(out, act_dim=actions.shape[-1])
-        # output2 = self.multi_action_head(self.out_norm(out)[:, 1::3])
-
-        output = self.action_head(out, act_dim=actions.shape[-1], seq_len=seq_len)
-
-        return ModelOutput(logits=output)
-
-    def predict_action(self, len_act: int, *args, **kwargs):
-        for i in range(len_act):
-            pass
+        out = self.out_norm(out)
+        # [batch_size, seq_len, action_dim]
+        # predict actions only from state embeddings
+        out = self.action_head(out[:, 1::3]) * self.max_action
+        return ModelOutput(logits=out)
+        # return out
 
 
-if __name__ == "__main__":
-    states = torch.rand(4, 10, 29)
-    actions = torch.rand(4, 10, 8)
-    returns_to_go = torch.rand(4, 10)
-    time_steps = torch.arange(10, dtype=torch.long).view(1, -1).repeat(4, 1)
+# https://github.com/pytorch/examples/blob/main/distributed/minGPT-ddp/mingpt/model.py
+def create_optimizer(model: torch.nn.Module, opt_config: dict):
+    """
+    This long function is unfortunately doing something very simple and is being very defensive:
+    We are separating out all parameters of the model into two buckets: those that will experience
+    weight decay for regularization and those that won't (biases, and layernorm/embedding weights).
+    We are then returning the PyTorch optimizer object.
+    """
 
-    model = DecisionTransformer(29, 8, num_layers=2, num_heads=2)
-    out = model(states, actions, returns_to_go, time_steps)
-    breakpoint()
+    # separate out all parameters to those that will and won't experience regularizing weight decay
+    decay = set()
+    no_decay = set()
+    whitelist_weight_modules = (torch.nn.Linear,)
+    blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
+    for mn, m in model.named_modules():
+        for pn, p in m.named_parameters():
+            fpn = "%s.%s" % (mn, pn) if mn else pn  # full param name
+            # random note: because named_modules and named_parameters are recursive
+            # we will see the same tensors p many many times. but doing it this way
+            # allows us to know which parent module any tensor p belongs to...
+            if pn.endswith("bias"):
+                # all biases will not be decayed
+                no_decay.add(fpn)
+            elif pn.endswith("weight") and isinstance(m, whitelist_weight_modules):
+                # weights of whitelist modules will be weight decayed
+                decay.add(fpn)
+            elif pn.endswith("in_proj_weight"):
+                # MHA projection layer
+                decay.add(fpn)
+            elif pn.endswith("weight") and isinstance(m, blacklist_weight_modules):
+                # weights of blacklist modules will NOT be weight decayed
+                no_decay.add(fpn)
+            elif pn.endswith("pos_emb"):
+                # positional embedding shouldn't be decayed
+                no_decay.add(fpn)
 
-    # torch.Size([4, 10, 29])
-# (Pdb) actions.shape
-# torch.Size([4, 10, 8])
-# (Pdb) returns_to_go.shape
-# torch.Size([4, 10])
-# (Pdb) time_steps.shape
-# torch.Size([4, 10])
+    # validate that we considered every parameter
+    param_dict = {pn: p for pn, p in model.named_parameters()}
+    inter_params = decay & no_decay
+    union_params = decay | no_decay
+    assert (
+        len(inter_params) == 0
+    ), "parameters %s made it into both decay/no_decay sets!" % (str(inter_params),)
+    assert (
+        len(param_dict.keys() - union_params) == 0
+    ), "parameters %s were not separated into either decay/no_decay set!" % (
+        str(param_dict.keys() - union_params),
+    )
+
+    # create the pytorch optimizer object
+    optim_groups = [
+        {
+            "params": [param_dict[pn] for pn in sorted(list(decay))],
+            "weight_decay": opt_config.weight_decay,
+        },
+        {
+            "params": [param_dict[pn] for pn in sorted(list(no_decay))],
+            "weight_decay": 0.0,
+        },
+    ]
+    optimizer = torch.optim.AdamW(
+        optim_groups, lr=opt_config.learning_rate, betas=(0.9, 0.95)
+    )
+    return optimizer
