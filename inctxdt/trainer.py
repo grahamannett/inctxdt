@@ -1,43 +1,17 @@
-from typing import Tuple
+from typing import Callable, Tuple
 
 import torch
 import torch.nn as nn
 
-from torch.utils.data import DataLoader
+from tqdm.auto import tqdm, trange
+
+from gymnasium import Env
 
 from inctxdt.evaluation import eval_rollout
 from inctxdt.model import DecisionTransformer
 from inctxdt.batch import Batch
 from inctxdt.datasets import MinariDataset
-
-
-class config:
-    device: str = "cpu"
-    epochs: int = 1
-
-    # optim
-    learning_rate: float = 1e-4
-    betas: Tuple[float, float] = (0.9, 0.999)
-    weight_decay: float = 1e-4
-    warmup_steps: int = 10
-    batch_size: int = 4
-
-    clip_grad: bool = True
-
-    @classmethod
-    def get(cls):
-        import argparse
-
-        parser = argparse.ArgumentParser()
-        for k, v in cls.__dict__.items():
-            if k.startswith("_"):
-                continue
-            parser.add_argument(f"--{k}", type=type(v), default=v)
-        args = parser.parse_args()
-
-        for k, v in vars(args).items():
-            setattr(cls, k, v)
-        return cls
+from inctxdt.config import config_tool, EnvSpec
 
 
 def loss_fn(logits, targets, **kwargs):
@@ -45,32 +19,86 @@ def loss_fn(logits, targets, **kwargs):
 
 
 def train(
-    model: nn.Module, dataloader: torch.utils.data.DataLoader, config: config = config
+    model: nn.Module,
+    dataloader: torch.utils.data.DataLoader,
+    config: config_tool = config_tool,
+    accelerator: type = None,
+    env: Env = None,  # noqa
 ):
-    model = model.to(config.device)
-    env = dataloader.dataset.recover_environment()
+    if env is None:
+        env = dataloader.dataset.recover_environment()
 
-    if config.device == "cuda":
-        dist_model = torch.nn.DataParallel(model)
+    env_spec = EnvSpec(  # S params is sequence params
+        model.action_dim, model.state_dim, model.episode_len, model.seq_len
+    )
+    device = config.device
+    _main_proc = accelerator.is_local_main_process if accelerator else True
 
-    optim = torch.optim.AdamW(
+    optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
         betas=config.betas,
     )
+
     scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optim,
+        optimizer,
         lambda steps: min((steps + 1) / config.warmup_steps, 1),
     )
 
-    for epoch in range(config.epochs):
-        print(f"Epoch {epoch}")
-        dist_model.train()
+    if accelerator:
+        model, dataloader, optimizer, scheduler = accelerator.prepare(
+            model, dataloader, optimizer, scheduler
+        )
+        device = accelerator.device
+    else:
+        model = torch.nn.DataParallel(model)
+        model = model.to(config.device)
+
+    def data_iter_fn(batch_iter) -> Tuple[int, Batch]:
+        for batch_idx, batch in batch_iter:
+            if isinstance(early_end := config.batch_early_termination, (int, float)):
+                if batch_idx >= early_end:
+                    return
+
+            yield batch_idx, batch
+
+    def handle_batch(batch) -> Batch:
+        if accelerator is None:
+            batch = batch.to(device)
+        return batch
+
+    def handle_loss(pred, batch) -> torch.Tensor:
+        loss = loss_fn(pred, batch.actions, reduction="none")
+        loss = (loss * batch.mask.unsqueeze(-1)).mean()
+
+        if accelerator is not None:
+            accelerator.backward(loss)
+        else:
+            loss.backward()
+        return loss
+
+    def post_handle_loss(m):
+        if config.clip_grad is not None:
+            torch.nn.utils.clip_grad_norm_(m.parameters(), config.clip_grad)
+
+        optimizer.step()
+        scheduler.step()
+
+    epoch_pbar = trange(
+        config.epochs, desc=f"Epoch", disable=not _main_proc, leave=False
+    )
+
+    for epoch in epoch_pbar:
+        model.train()
         epoch_loss = 0
-        for batch_idx, batch in enumerate(dataloader):
-            batch = batch.to(config.device)
-            predicted_actions = dist_model.forward(
+
+        pbar = tqdm(dataloader, disable=not _main_proc)
+
+        for batch_idx, batch in data_iter_fn(enumerate(pbar)):
+            batch = handle_batch(batch)
+
+            predicted_actions = model.forward(
                 states=batch.observations,
                 actions=batch.actions,
                 returns_to_go=batch.returns_to_go,
@@ -78,62 +106,20 @@ def train(
                 mask=batch.mask,
             )
 
-            loss = loss_fn(predicted_actions, batch.actions, reduction="none")
-            loss = (loss * batch.mask.unsqueeze(-1)).mean()
-            loss.backward()
-
-            if config.clip_grad is not None:
-                torch.nn.utils.clip_grad_norm_(
-                    dist_model.parameters(), config.clip_grad
-                )
-            optim.step()
-            scheduler.step()
+            loss = handle_loss(predicted_actions, batch)
+            post_handle_loss(model)
 
             epoch_loss += loss.item()
             if batch_idx % 100 == 0:
-                print(
-                    f"batch-idx:{batch_idx}/{len(dataloader)} | epoch-loss: {epoch_loss:.4f}"
-                )
+                pbar.set_description(f"loss={loss.item():.4f}")
+
+        epoch_pbar.set_description(f"Epoch{epoch} loss: {epoch_loss:.4f}")
 
         eval_info = eval_rollout(
-            model, env=env, target_return=1000.0, device=config.device
+            model,
+            env=env,
+            env_spec=env_spec,
+            target_return=1000.0,
+            device=device,
         )
         print(f"Eval: {eval_info}")
-
-
-if __name__ == "__main__":
-    config.get()
-    # ds = MinariDataset(env_name="pen-human-v0")
-    # env_name = "d4rl_hopper-expert-v2"
-    # env_name = "d4rl_halfcheetah-expert-v2"  # test with this to make sure its working
-    env_name = "pointmaze-umaze-v0"
-    env_name = "pointmaze-open-dense-v0"
-
-    # unless i update
-    datasets = [
-        "pointmaze-large-dense-v0",
-        "pointmaze-large-v0",
-        "pointmaze-medium-dense-v0",
-        "pointmaze-medium-v0",
-        "pointmaze-open-dense-v0",
-        "pointmaze-umaze-v0",
-    ]
-
-    ds = MinariDataset(env_name=env_name)
-
-    dataloader = DataLoader(
-        ds,
-        batch_size=config.batch_size,
-        shuffle=True,
-        collate_fn=Batch.make_collate_fn(device=config.device, batch_first=True),
-    )
-    env = ds.recover_environment()
-
-    sample = ds[0]
-    state_dim = sample.observations.shape[-1]
-    action_dim = sample.actions.shape[-1]
-
-    model = DecisionTransformer(
-        state_dim=state_dim, action_dim=action_dim, embedding_dim=128, num_layers=6
-    )
-    train(model, dataloader)

@@ -154,7 +154,7 @@ class DecisionTransformer(nn.Module):
         # [batch_size, seq_len, emb_dim]
         time_emb = self.timestep_emb(time_steps)
 
-        obs_emb = self.state_emb(states[:, : time_steps.size(1)]) + time_emb
+        obs_emb = self.state_emb(states) + time_emb
         act_emb = self.action_emb(actions) + time_emb
         re_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb
 
@@ -191,3 +191,7 @@ class DecisionTransformer(nn.Module):
         # predict actions only from state embeddings
         out = self.action_head(out[:, 1::3]) * self.max_action
         return out
+
+    def predict_action(self, len_act: int, *args, **kwargs):
+        for i in range(len_act):
+            pass

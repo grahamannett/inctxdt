@@ -9,7 +9,9 @@ from inctxdt.episode_data import EpisodeData
 from functools import reduce
 
 
-def discounted_cumsum(x: np.ndarray, gamma: float, dtype: np.dtype | str = np.float32) -> np.ndarray:
+def discounted_cumsum(
+    x: np.ndarray, gamma: float, dtype: np.dtype | str = np.float32
+) -> np.ndarray:
     cumsum = np.zeros_like(x, dtype=dtype)
     cumsum[-1] = x[-1]
     for t in reversed(range(x.shape[0] - 1)):
@@ -45,38 +47,66 @@ class MinariDataset(minari.MinariDataset):
         if self.seq_len:
             raise NotImplementedError
 
+        n_timesteps = episode_data["total_timesteps"]
+        assert n_timesteps == len(episode_data["actions"])
+        assert n_timesteps == len(episode_data["rewards"])
+
         episode_data["env_name"] = self.env_name
 
         if episode_data["seed"] == "None":
             episode_data["seed"] = None
 
-        episode_data["returns_to_go"] = discounted_cumsum(episode_data["rewards"], gamma=1.0, dtype=np.float32)
-        episode_data["mask"] = np.ones(episode_data["total_timesteps"], dtype=np.float32)
-        episode_data["timesteps"] = np.arange(episode_data["total_timesteps"])
+        episode_data["returns_to_go"] = discounted_cumsum(
+            episode_data["rewards"], gamma=1.0, dtype=np.float32
+        )
+        episode_data["mask"] = np.ones(
+            episode_data["total_timesteps"], dtype=np.float32
+        )
+        episode_data["timesteps"] = np.arange(n_timesteps)
 
         # dont do this as i dont know if the other fields are useful or what they mean
         # concatenate episode data
         # episode_data["observations"] = np.concatenate(list(episode_data["observations"].values()), axis=-1, dtype=np.float32)
 
         # fix dtypes of others
-        episode_data["observations"] = episode_data["observations"]["observation"][:-1].astype(np.float32)
+        episode_data["observations"] = np.concatenate(
+            [
+                episode_data["observations"][key]
+                for key in episode_data["observations"].keys()
+            ],
+            axis=-1,
+            dtype=np.float32,
+        )[:n_timesteps]
+        # episode_data["observations"] = episode_data["observations"]["observation"][
+        #     :n_timesteps
+        # ].astype(np.float32)
         episode_data["actions"] = episode_data["actions"].astype(np.float32)
         episode_data["rewards"] = episode_data["rewards"].astype(np.float32)
-
         return episode_data
 
 
 class AcrossEpisodeDataset(MinariDataset):
-    def __init__(self, env_name: str, seq_len: int = None, max_num_epsisodes: int = 2, drop_last: bool = False):
+    def __init__(
+        self,
+        env_name: str,
+        seq_len: int = None,
+        max_num_epsisodes: int = 2,
+        drop_last: bool = False,
+    ):
         super().__init__(env_name, seq_len)
         self.max_num_episodes = max_num_epsisodes
         self.drop_last = drop_last
 
         # just make it so we can always cycle through the episodes
-        self.possible_idxs = np.append(self.episode_indices, self.episode_indices[0 : self.max_num_episodes - 1])
+        self.possible_idxs = np.append(
+            self.episode_indices, self.episode_indices[0 : self.max_num_episodes - 1]
+        )
 
     def __getitem__(self, idx: int) -> Any:
-        eps = [super(AcrossEpisodeDataset, self).__getitem__(i) for i in self.possible_idxs[idx : idx + self.max_num_episodes]]
+        eps = [
+            super(AcrossEpisodeDataset, self).__getitem__(i)
+            for i in self.possible_idxs[idx : idx + self.max_num_episodes]
+        ]
         return EpisodeData.combine(eps)
 
 
@@ -103,3 +133,9 @@ class MultipleMinariDataset(Dataset):
         samples = [ds[0] for ds in self.datasets]
         for i, sample in enumerate(samples):
             pass
+
+    def __getattr__(self, attr):
+        if attr in self.__dict__:
+            return self.__dict__[attr]
+        else:
+            return getattr(self.datasets[0], attr)

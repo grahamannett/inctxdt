@@ -17,18 +17,28 @@ class FieldList(list):
 
     @property
     def tensor(self):
+        if (len(self) > 0) and (self[0] is None):
+            return
+
         return torch.tensor(self)
 
     @property
     def pad_tensor(self):
-        return torch.nn.utils.rnn.pad_sequence([torch.from_numpy(a) for a in self], batch_first=self.batch_first)
+        if (len(self) > 0) and (self[0] is None):
+            return
+
+        return torch.nn.utils.rnn.pad_sequence(
+            [torch.from_numpy(a) for a in self], batch_first=self.batch_first
+        )
 
     # if you need additional args on them you can do this:
     def tensor_(self, *args, **kwargs):
         return torch.tensor(self, *args, **kwargs)
 
     def pad_tensor_(self, **kwargs):
-        return torch.nn.utils.rnn.pad_sequence([torch.from_numpy(a) for a in self], **kwargs)
+        return torch.nn.utils.rnn.pad_sequence(
+            [torch.from_numpy(a) for a in self], **kwargs
+        )
 
 
 class EpisodeList(list):
@@ -39,7 +49,9 @@ class EpisodeList(list):
         self.batch_first = batch_first
 
     def __getattr__(self, attr):
-        return FieldList([getattr(ep, attr) for ep in self], batch_first=self.batch_first)
+        return FieldList(
+            [getattr(ep, attr) for ep in self], batch_first=self.batch_first
+        )
 
     def field(self, field: str, _default=None):
         return [getattr(ep, field, _default) for ep in self]
@@ -47,17 +59,18 @@ class EpisodeList(list):
 
 @tensorclass
 class Batch:
-    id: torch.Tensor
-    total_timesteps: torch.Tensor
     observations: torch.Tensor | TensorDict
     actions: torch.Tensor
-    rewards: torch.Tensor
-    returns_to_go: torch.Tensor
-    terminations: torch.Tensor
-    truncations: torch.Tensor
+    total_timesteps: Optional[torch.Tensor] = None
+
+    rewards: Optional[torch.Tensor] = None
+    returns_to_go: Optional[torch.Tensor] = None
+    terminations: Optional[torch.Tensor] = None
+    truncations: Optional[torch.Tensor] = None
     seed: Optional[torch.Tensor] = None  # out of order with EpisodeData
     timesteps: Optional[torch.Tensor] = None
     mask: Optional[torch.Tensor] = None
+    id: Optional[torch.Tensor] = None
     env_name: Optional[List[str]] = None
 
 
@@ -78,16 +91,16 @@ class Collate:
     def default_return_fn(self, episode_list: List[EpisodeData]) -> Batch:
         eps = EpisodeList(episode_list, batch_first=self.batch_first)
         return Batch(
-            id=eps.id,
-            total_timesteps=eps.total_timesteps.tensor,
             observations=eps.observations.pad_tensor,
             actions=eps.actions.pad_tensor,
+            total_timesteps=eps.total_timesteps.tensor,
             rewards=eps.rewards.pad_tensor,
             returns_to_go=eps.returns_to_go.pad_tensor,
             terminations=eps.terminations.pad_tensor,
             truncations=eps.truncations.pad_tensor,
             timesteps=eps.timesteps.pad_tensor,
             mask=eps.mask.pad_tensor,
+            id=eps.id,
             seed=eps.seed,
             env_name=eps.env_name,
             batch_size=[len(eps)],
@@ -96,7 +109,9 @@ class Collate:
 
 # helper functions for padding and stacking.  Note:
 def from_eps_with_pad(eps, attr: str, batch_first: bool = True) -> torch.Tensor:
-    return torch.nn.utils.rnn.pad_sequence([torch.from_numpy(getattr(x, attr)) for x in eps], batch_first=batch_first)
+    return torch.nn.utils.rnn.pad_sequence(
+        [torch.from_numpy(getattr(x, attr)) for x in eps], batch_first=batch_first
+    )
 
 
 def from_eps(eps: List[EpisodeData], attr: str) -> torch.Tensor:
@@ -108,11 +123,17 @@ def return_fn_from_episodes(batch_first: bool = True, return_class: type = Batch
         return return_class(
             id=from_eps(eps, "id"),
             total_timesteps=from_eps(eps, "total_timesteps"),
-            observations=from_eps_with_pad(eps, "observations", batch_first=batch_first),
+            observations=from_eps_with_pad(
+                eps, "observations", batch_first=batch_first
+            ),
             actions=from_eps_with_pad(eps, "actions", batch_first=batch_first),
             rewards=from_eps_with_pad(eps, "rewards", batch_first=batch_first),
-            returns_to_go=from_eps_with_pad(eps, "returns_to_go", batch_first=batch_first),
-            terminations=from_eps_with_pad(eps, "terminations", batch_first=batch_first),
+            returns_to_go=from_eps_with_pad(
+                eps, "returns_to_go", batch_first=batch_first
+            ),
+            terminations=from_eps_with_pad(
+                eps, "terminations", batch_first=batch_first
+            ),
             truncations=from_eps_with_pad(eps, "truncations", batch_first=batch_first),
             timesteps=from_eps_with_pad(eps, "timesteps", batch_first=batch_first),
             mask=from_eps_with_pad(eps, "mask", batch_first=batch_first),
