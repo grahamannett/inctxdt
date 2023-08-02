@@ -27,9 +27,7 @@ class TransformerBlock(nn.Module):
         self.norm2 = nn.LayerNorm(embedding_dim)
         self.drop = nn.Dropout(residual_dropout)
 
-        self.attention = nn.MultiheadAttention(
-            embedding_dim, num_heads, attention_dropout, batch_first=True
-        )
+        self.attention = nn.MultiheadAttention(embedding_dim, num_heads, attention_dropout, batch_first=True)
         self.mlp = nn.Sequential(
             nn.Linear(embedding_dim, 4 * embedding_dim),
             nn.GELU(),
@@ -37,9 +35,7 @@ class TransformerBlock(nn.Module):
             nn.Dropout(residual_dropout),
         )
         # True value indicates that the corresponding position is not allowed to attend
-        self.register_buffer(
-            "causal_mask", ~torch.tril(torch.ones(seq_len, seq_len)).to(bool)
-        )
+        self.register_buffer("causal_mask", ~torch.tril(torch.ones(seq_len, seq_len)).to(bool))
         self.seq_len = seq_len
 
     # [batch_size, seq_len, emb_dim] -> [batch_size, seq_len, emb_dim]
@@ -50,9 +46,7 @@ class TransformerBlock(nn.Module):
 
         return self.causal_mask[: x.shape[1], : x.shape[1]]
 
-    def forward(
-        self, x: torch.Tensor, padding_mask: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         # causal_mask = self.causal_mask[: x.shape[1], : x.shape[1]]
         causal_mask = self.get_casual_mask(x)
 
@@ -123,9 +117,7 @@ class DecisionTransformer(nn.Module):
             ]
         )
 
-        self.action_head = nn.Sequential(
-            nn.Linear(embedding_dim, action_dim), nn.Tanh()
-        )
+        self.action_head = nn.Sequential(nn.Linear(embedding_dim, action_dim), nn.Tanh())
 
         self.seq_len = seq_len
         self.embedding_dim = embedding_dim
@@ -169,9 +161,7 @@ class DecisionTransformer(nn.Module):
     def configure_scheduler(
         self, optimizer: torch.optim.Optimizer, warmup_steps: int
     ) -> torch.optim.lr_scheduler.LRScheduler:
-        scheduler = torch.optim.lr_scheduler.LambdaLR(
-            optimizer, lambda steps: min((steps + 1) / warmup_steps, 1)
-        )
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda steps: min((steps + 1) / warmup_steps, 1))
         return scheduler
 
     def forward(
@@ -265,14 +255,10 @@ def create_optimizer(model: torch.nn.Module, opt_config: dict):
     param_dict = {pn: p for pn, p in model.named_parameters()}
     inter_params = decay & no_decay
     union_params = decay | no_decay
-    assert (
-        len(inter_params) == 0
-    ), "parameters %s made it into both decay/no_decay sets!" % (str(inter_params),)
+    assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params),)
     assert (
         len(param_dict.keys() - union_params) == 0
-    ), "parameters %s were not separated into either decay/no_decay set!" % (
-        str(param_dict.keys() - union_params),
-    )
+    ), "parameters %s were not separated into either decay/no_decay set!" % (str(param_dict.keys() - union_params),)
 
     # create the pytorch optimizer object
     optim_groups = [
@@ -285,7 +271,5 @@ def create_optimizer(model: torch.nn.Module, opt_config: dict):
             "weight_decay": 0.0,
         },
     ]
-    optimizer = torch.optim.AdamW(
-        optim_groups, lr=opt_config.learning_rate, betas=(0.9, 0.95)
-    )
+    optimizer = torch.optim.AdamW(optim_groups, lr=opt_config.learning_rate, betas=(0.9, 0.95))
     return optimizer
