@@ -6,14 +6,10 @@ from inctxdt.model_output import ModelOutput
 
 
 # Decision Transformer implementation
+
+
+# Decision Transformer implementation
 class TransformerBlock(nn.Module):
-    """TransformerBlock class.
-    from:
-    https://github.com/tinkoff-ai/CORL/blob/main/algorithms/offline/dt.py
-
-    main modification is the causal mask might need to be dynamic
-    """
-
     def __init__(
         self,
         seq_len: int,
@@ -35,20 +31,13 @@ class TransformerBlock(nn.Module):
             nn.Dropout(residual_dropout),
         )
         # True value indicates that the corresponding position is not allowed to attend
+        seq_len = seq_len * 10
         self.register_buffer("causal_mask", ~torch.tril(torch.ones(seq_len, seq_len)).to(bool))
         self.seq_len = seq_len
 
     # [batch_size, seq_len, emb_dim] -> [batch_size, seq_len, emb_dim]
-
-    def get_casual_mask(self, x: torch.Tensor) -> torch.Tensor:
-        if x.shape[1] > self.causal_mask.shape[0]:
-            return ~torch.tril(torch.ones(x.shape[1], x.shape[1])).to(bool).to(x.device)
-
-        return self.causal_mask[: x.shape[1], : x.shape[1]]
-
     def forward(self, x: torch.Tensor, padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        # causal_mask = self.causal_mask[: x.shape[1], : x.shape[1]]
-        causal_mask = self.get_casual_mask(x)
+        causal_mask = self.causal_mask[: x.shape[1], : x.shape[1]]
 
         norm_x = self.norm1(x)
         attention_out = self.attention(
@@ -59,7 +48,6 @@ class TransformerBlock(nn.Module):
             key_padding_mask=padding_mask,
             need_weights=False,
         )[0]
-
         # by default pytorch attention does not use dropout
         # after final attention weights projection, while minGPT does:
         # https://github.com/karpathy/minGPT/blob/7218bcfa527c65f164de791099de715b81a95106/mingpt/model.py#L70 # noqa
@@ -69,18 +57,11 @@ class TransformerBlock(nn.Module):
 
 
 class DecisionTransformer(nn.Module):
-    """DecisionTransformer class.
-    from:
-    https://github.com/tinkoff-ai/CORL/blob/main/algorithms/offline/dt.py
-
-    main difference is we might need to intake batch and output is a ModelOutput
-    """
-
     def __init__(
         self,
         state_dim: int,
         action_dim: int,
-        seq_len: int = 200,
+        seq_len: int = 20,
         episode_len: int = 1000,
         embedding_dim: int = 128,
         num_layers: int = 4,
@@ -89,7 +70,6 @@ class DecisionTransformer(nn.Module):
         residual_dropout: float = 0.0,
         embedding_dropout: float = 0.0,
         max_action: float = 1.0,
-        **kwargs,
     ):
         super().__init__()
         self.emb_drop = nn.Dropout(embedding_dropout)
@@ -97,12 +77,10 @@ class DecisionTransformer(nn.Module):
 
         self.out_norm = nn.LayerNorm(embedding_dim)
         # additional seq_len embeddings for padding timesteps
-        self.timestep_emb = nn.Embedding(episode_len + seq_len, embedding_dim)
+        self.timestep_emb = nn.Embedding(episode_len + seq_len**2, embedding_dim)
         self.state_emb = nn.Linear(state_dim, embedding_dim)
         self.action_emb = nn.Linear(action_dim, embedding_dim)
         self.return_emb = nn.Linear(1, embedding_dim)
-
-        self.env_embs = nn.ModuleDict()
 
         self.blocks = nn.ModuleList(
             [
@@ -116,15 +94,14 @@ class DecisionTransformer(nn.Module):
                 for _ in range(num_layers)
             ]
         )
-
         self.action_head = nn.Sequential(nn.Linear(embedding_dim, action_dim), nn.Tanh())
-
         self.seq_len = seq_len
         self.embedding_dim = embedding_dim
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.episode_len = episode_len
         self.max_action = max_action
+        self.only_logits = False
 
         self.apply(self._init_weights)
 
@@ -138,58 +115,30 @@ class DecisionTransformer(nn.Module):
             torch.nn.init.zeros_(module.bias)
             torch.nn.init.ones_(module.weight)
 
-    def configure_optimizers(
-        self,
-        learning_rate: float = 1e-3,
-        weight_decay: float = 0.0,
-        betas: tuple = (0.9, 0.999),
-    ) -> torch.optim.Optimizer:
-        """
-        This long function is unfortunately doing something very simple and is being very defensive:
-        We are separating out all parameters of the model into two buckets: those that will experience
-        weight decay for regularization and those that won't (biases, and layernorm/embedding weights).
-        We are then returning the PyTorch optimizer object.
-        """
-
-        # to do this you want to use something like the following:
-        # https://github.com/Howuhh/faster-trajectory-transformer/blob/main/trajectory/utils/common.py
-        # note: these are all based on karpathy gpt
-        raise NotImplementedError(
-            "configure_optimizers not implemented  because the decay/nodecay stuff is more work for not much gain"
-        )
-
-    def configure_scheduler(
-        self, optimizer: torch.optim.Optimizer, warmup_steps: int
-    ) -> torch.optim.lr_scheduler.LRScheduler:
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda steps: min((steps + 1) / warmup_steps, 1))
-        return scheduler
-
     def forward(
         self,
         states: torch.Tensor,  # [batch_size, seq_len, state_dim]
         actions: torch.Tensor,  # [batch_size, seq_len, action_dim]
         returns_to_go: torch.Tensor,  # [batch_size, seq_len]
         time_steps: torch.Tensor,  # [batch_size, seq_len]
-        mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
         padding_mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
+        **kwargs,
     ) -> torch.FloatTensor:
+
         batch_size, seq_len = states.shape[0], states.shape[1]
         # [batch_size, seq_len, emb_dim]
-        time_emb = self.timestep_emb(time_steps)
 
-        obs_emb = self.state_emb(states) + time_emb
+        time_emb = self.timestep_emb(time_steps)
+        state_emb = self.state_emb(states) + time_emb
         act_emb = self.action_emb(actions) + time_emb
-        re_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb
+        returns_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb
 
         # [batch_size, seq_len * 3, emb_dim], (r_0, s_0, a_0, r_1, s_1, a_1, ...)
         sequence = (
-            torch.stack([re_emb, obs_emb, act_emb], dim=1)
+            torch.stack([returns_emb, state_emb, act_emb], dim=1)
             .permute(0, 2, 1, 3)
             .reshape(batch_size, 3 * seq_len, self.embedding_dim)
         )
-
-        if mask is not None:
-            padding_mask = ~mask.to(torch.bool)
 
         if padding_mask is not None:
             # [batch_size, seq_len * 3], stack mask identically to fit the sequence
@@ -206,11 +155,14 @@ class DecisionTransformer(nn.Module):
         for block in self.blocks:
             out = block(out, padding_mask=padding_mask)
 
-        # should be action dim
         out = self.out_norm(out)
         # [batch_size, seq_len, action_dim]
         # predict actions only from state embeddings
         out = self.action_head(out[:, 1::3]) * self.max_action
+        # return out
+        if self.only_logits:
+            return out
+
         return ModelOutput(logits=out)
         # return out
 

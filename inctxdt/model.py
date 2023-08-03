@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 # from gymnasium import Env
 import torch
@@ -83,6 +83,50 @@ class EnvEmbedding(nn.Module):
             )
 
 
+class SequentialActionHeadActionDim(nn.Module):
+    def __init__(self, embedding_dim: int, action_dim: int, stack_idxs: List[int] = [0, 1], kernel_size: int = (1, 2)):
+        assert len(stack_idxs) == kernel_size[-1], "we can only stack as many as we can convolve"
+
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        self.action_dim = action_dim
+        self.stack_idxs = stack_idxs
+        self.subtypes = 3  # i.e. returns, states, actions
+
+        self.norm = nn.LayerNorm(embedding_dim)
+        self.conv = nn.Conv2d(embedding_dim, action_dim, kernel_size=kernel_size)
+        self.activation = nn.Tanh()
+
+    def forward(self, x: torch.Tensor, **kwargs):
+        batch_size, seq_len = x.shape[0], x.shape[1] // self.subtypes
+
+        # go from [batch_size, seq_len * subtypes, emb_dim] -> [batch_size, subtypes, seq_len, emb_dim]
+        x = x.reshape(batch_size, seq_len, 3, self.embedding_dim).permute(0, 2, 1, 3)
+        x_postnorm = self.norm(x)
+
+        # stack along this dim realistically we probably dont need this but its confusing otherwise
+        # [batch_size, len(stack_idxs), ]
+        x_postnorm = torch.stack([x_postnorm[:, i] for i in self.stack_idxs], dim=1)
+
+        # to [batch_size, emb_dim, seq_len, len(stack_idxs)] - treat emb is the channel layer
+        x_postnorm = x_postnorm.permute(0, 3, 2, 1)
+        x_postnorm = self.conv(x_postnorm)
+        x_postnorm = x_postnorm.squeeze(-1).permute(0, 2, 1)  # put back to [batch_size, seq_len, act_dim]
+
+        return self.activation(x_postnorm).reshape(batch_size, -1)  # flatten to [batch_size, seq_len * act_dim]
+
+
+class SequentialActionHead(nn.Module):
+    def __init__(self, embedding_dim: int):
+        pass
+
+    def forward(self, x: torch.Tensor, **kwargs):
+        pass
+
+    def _generate_actions(self, x: torch.Tensor, action_dim: int):
+        pass
+
+
 class DecisionTransformer(nn.Module):
     def __init__(
         self,
@@ -122,35 +166,7 @@ class DecisionTransformer(nn.Module):
             ]
         )
 
-        # self.action_head_mods = nn.ModuleDict(
-        #     {
-        #         "norm": nn.LayerNorm(embedding_dim),
-        #         "linear": nn.Linear(embedding_dim, 1),
-        #         "activation": nn.Tanh(),  # all values for actions are scaled to -1 to -1
-        #     }
-        # )
-        # self.norm_out = nn.LayerNorm(embedding_dim)
-        # self._action_head = nn.Sequential(nn.Linear(embedding_dim, 1), nn.Tanh())
-        self.head = nn.ModuleDict(
-            {
-                "norm": nn.LayerNorm(embedding_dim),
-                "conv": nn.Conv1d(128, action_dim, kernel_size=3, stride=3),
-                "activation": nn.Tanh(),
-                "linear": nn.Linear(embedding_dim, 1),
-                "linear_act": nn.Linear(embedding_dim, action_dim),
-            }
-        )
-
-        self.conv_head = nn.ModuleDict(
-            {
-                "norm": nn.LayerNorm(embedding_dim),
-                "conv2d": nn.Conv2d(embedding_dim, action_dim, kernel_size=(1, 3)),
-                "activation": nn.Tanh(),
-                "linear": nn.Linear(embedding_dim, 1),
-            }
-        )
-        # self.linear_out = nn.Linear(embedding_dim, 1)
-        # self.activation_out = nn.Tanh()
+        self.head = SequentialActionHeadActionDim(embedding_dim, action_dim, stack_idxs=[0, 1], kernel_size=(1, 2))
 
         self.seq_len = seq_len
         self.embedding_dim = embedding_dim
@@ -171,86 +187,6 @@ class DecisionTransformer(nn.Module):
             torch.nn.init.zeros_(module.bias)
             torch.nn.init.ones_(module.weight)
 
-    def action_head(
-        self,
-        x: torch.Tensor,
-        act_dim: int = None,  # number of actions needed per pred step
-        seq_len: int = None,
-        batch_size: int = None,
-        vals_in_timestep: int = 3,
-    ) -> torch.Tensor:
-        # act_dim = act_dim or self.action_dim
-        # seq_len = seq_len or (x.shape[1] // 3)
-        # return self._action_head2d(x, act_dim, seq_len, batch_size, vals_in_timestep)
-        # return self._alt(x, batch_size, seq_len)
-        return self._alt_conv_(x, batch_size=batch_size, seq_len=seq_len)
-
-        # notes:  i cant tell if i should be using permute or view or what
-        # 1d filter
-        # x = x.reshape(batch_size, -1, self.embedding_dim)
-        # x = F.adaptive_avg_pool1d(x.permute(0, 2, 1), seq_len * act_dim).permute(0, 2, 1)
-        # x_postnorm = self.head["norm"](x)
-        # x_out = self.head["activation"](self.head["linear"](x_postnorm))
-        # x_out = x_out.reshape(
-        #     batch_size, seq_len, act_dim
-        # )  # reshape because the results expect act dim to not be folded in
-        # return x_out
-
-    def _alt(self, x: torch.Tensor, batch_size: int, seq_length: int, **kwargs):
-        # out = self.action_head(out[:, 1::3]) * self.max_action
-        x = x.reshape(batch_size, seq_length, 3, self.embedding_dim).permute(0, 2, 1, 3)
-
-        retrs = x[:, 0]
-        states = x[:, 1]
-        acts = x[:, 2]
-        pred = retrs + states  # adding acts here makes it worse... trying to wonder why
-        pred = self.head["norm"](pred)  # [here we have batch_size, seq_len, emb_dim]
-        pred = self.head["activation"](self.head["linear_act"](pred))
-        return pred
-
-    def _alt_conv_(self, x: torch.Tensor, batch_size: int, seq_len: int, **kwargs):
-        x_ = x.reshape(batch_size, seq_len, 3, self.embedding_dim).permute(0, 2, 1, 3)
-        x_postnorm = self.conv_head["norm"](x_)
-
-        # take returns  and states and then put in [batch_size x emb_dim x seq_len x 2]
-        x_postnorm = torch.stack([x_postnorm[:, 0], x_postnorm[:, 1], x_postnorm[:, 2]], dim=1)
-        x_postnorm = x_postnorm.permute(0, 3, 2, 1)
-        x_postnorm = self.conv_head["conv2d"](x_postnorm)
-        x_postnorm = x_postnorm.squeeze(-1).permute(0, 2, 1)
-        return self.conv_head["activation"](x_postnorm)
-
-    def _action_head1d(
-        self, x: torch.Tensor, act_dim: int, seq_len: int, batch_size: int, vals_in_timestep: int = 3, **kwargs
-    ) -> torch.Tensor:
-        # this is slightly right - at least it works
-        # x comes in as [batch_size, seq_len * 3, emb_dim]
-        x = x.reshape(batch_size, -1, self.embedding_dim)
-        x = F.adaptive_avg_pool1d(x.permute(0, 2, 1), seq_len * act_dim).permute(0, 2, 1)
-        x_postnorm = self.head["norm"](x)
-        x_out = self.head["activation"](self.head["linear"](x_postnorm))
-        x_out = x_out.reshape(
-            batch_size, seq_len, act_dim
-        )  # reshape because the results expect act dim to not be folded in
-        return x_out
-
-    def _action_head2d(
-        self, x: torch.Tensor, act_dim: int, seq_len: int, batch_size: int, vals_in_timestep: int = 3, **kwargs
-    ) -> torch.Tensor:
-        # this is slightly right - at least it works
-        # x comes in as [batch_size, seq_len * 3, emb_dim]
-        x_postnorm = self.head["norm"](x)
-
-        # convert to [batch_size, seq_len, 3, emb_dim] - view seems to work but is reshape better !!!
-        x_postnorm = x_postnorm.view(
-            batch_size, -1, vals_in_timestep, self.embedding_dim
-        )  # note: using reshape() rather than view here makes it worse.  i think the reshape makes the seq fall out
-
-        # [batch_size, 3, seq_len, emb_dim]
-        x_out = F.adaptive_avg_pool2d(x_postnorm, (act_dim, self.embedding_dim))
-        # breakpoint()
-        x_out = self.head["activation"](self.head["linear"](x_out))
-        return x_out
-
     def forward(
         self,
         states: torch.Tensor,  # [batch_size, seq_len, state_dim]
@@ -264,22 +200,20 @@ class DecisionTransformer(nn.Module):
         # [batch_size, seq_len, emb_dim]
         time_emb = self.timestep_emb(time_steps)
 
-        obs_emb = self.state_emb(states) + time_emb
+        ret_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb
+        state_emb = self.state_emb(states) + time_emb
         act_emb = self.action_emb(actions) + time_emb
-        re_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb
 
         # [batch_size, seq_len * 3, emb_dim], (r_0, s_0, a_0, r_1, s_1, a_1, ...)
-        # sequence = (
-        #     torch.stack([returns_emb, state_emb, act_emb], dim=1).permute(0, 2, 1, 3).reshape(batch_size, 3 * seq_len, self.embedding_dim)
-        # )
         sequence = (
-            torch.stack([re_emb, obs_emb, act_emb], dim=1)
+            torch.stack([ret_emb, state_emb, act_emb], dim=1)
             .permute(0, 2, 1, 3)
             .reshape(batch_size, 3 * seq_len, self.embedding_dim)
         )
 
-        if mask is not None:
-            padding_mask = ~mask.to(torch.bool)
+        # if mask is not None:
+        #     breakpoint()
+        #     padding_mask = ~mask.to(torch.bool)
 
         if padding_mask is not None:
             # [batch_size, seq_len * 3], stack mask identically to fit the sequence
@@ -296,8 +230,7 @@ class DecisionTransformer(nn.Module):
         for block in self.blocks:
             out = block(out, padding_mask=padding_mask)
 
-        # should be action dim
-        logits = self.action_head(out, act_dim=act_dim, seq_len=seq_len, batch_size=batch_size)
+        logits = self.head(out)
 
         return ModelOutput(logits=logits)
 
@@ -319,11 +252,3 @@ if __name__ == "__main__":
     model = DecisionTransformer(29, 8, num_layers=2, num_heads=2)
     out = model(states, actions, returns_to_go, time_steps)
     breakpoint()
-
-    # torch.Size([4, 10, 29])
-# (Pdb) actions.shape
-# torch.Size([4, 10, 8])
-# (Pdb) returns_to_go.shape
-# torch.Size([4, 10])
-# (Pdb) time_steps.shape
-# torch.Size([4, 10])

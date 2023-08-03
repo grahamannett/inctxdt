@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import NamedTuple, Tuple
 import torch
 from distutils.util import strtobool
@@ -5,12 +6,13 @@ from distutils.util import strtobool
 _warned_attrs = set()
 
 
-class EnvSpec(NamedTuple):
-    action_dim: int
-    state_dim: int
-
+@dataclass
+class EnvSpec:
     episode_len: int
     seq_len: int
+
+    action_dim: int
+    state_dim: int
 
 
 class config_tool:
@@ -19,6 +21,14 @@ class config_tool:
 
     epochs: int = 1
     batch_size: int = 32
+    num_workers: int = 8
+
+    # dataset
+    seq_len: int = 20
+    episode_len: int = 1000
+
+    num_layers: int = 4
+    num_heads: int = 4
 
     adist: bool = False  # accelerate distributed
     dist: bool = False  # pytorch distributed
@@ -31,7 +41,12 @@ class config_tool:
 
     clip_grad: bool = True
 
+    # eval
+    reward_scale: float = 0.001
+    eval_episodes: int = 5
+
     _debug: bool = False
+    debug_note: str = ""
     __singleton = None
 
     def __init__(self, *args, **kwargs):
@@ -42,15 +57,32 @@ class config_tool:
             return self.__dict__[attr]
 
         if (attr not in _warned_attrs) and self._debug:
-            print(
-                f" WARNING: Used non-existent config field:`{str(attr)}`. Returning None."
-            )
+            print(f" WARNING: Used non-existent config field:`{str(attr)}`. Returning None.")
             _warned_attrs.add(attr)
 
         return None
 
+    def get_env_spec(self, env: str | int = None):
+        if env is None or isinstance(env, str):
+            import gym  # might need gymnasium
+
+            env = gym.make(self.env_name)
+
+        action_dim = env.action_space.shape[0]
+        state_dim = env.observation_space.shape[0]
+
+        return EnvSpec(
+            episode_len=self.episode_len,
+            seq_len=self.seq_len,
+            action_dim=action_dim,
+            state_dim=state_dim,
+        )
+
     @classmethod
     def get(cls):
+        """
+        helper class to make singleton config object
+        """
         import argparse
 
         parser = argparse.ArgumentParser()
@@ -86,7 +118,35 @@ class config_tool:
         if cls.__singleton is None:  # might want this before arg related
             cls.__singleton = cls()
 
+        _debug_note(cls.debug_note.upper())
+        # import atexit
+
+        # def _print_info():
+        #     print("===" * 30)
+        #     print("\t--RUN/DEBUG-NOTE:")
+        #     print("\n\n==>🤠|>", cls.debug_note.upper(), ==|""🤠<==\n\n")
+        #     print("===" * 30)
+
+        # atexit.register(_print_info)
+        # _print_info()
+
         return cls.__singleton
+
+
+def _debug_note(note: str = None):
+    if note in ["", None]:
+        return
+
+    import atexit
+
+    def _print_info():
+        print("===" * 30)
+        print("\t--RUN/DEBUG-NOTE:")
+        print("\n\n==>🤠|>", note.upper(), "<|🤠<==\n\n")
+        print("===" * 30)
+
+    atexit.register(_print_info)
+    _print_info()
 
 
 if __name__ == "__main__":

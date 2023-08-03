@@ -30,9 +30,7 @@ def wrap_env(
 
 
 # some utils functionalities specific for Decision Transformer
-def pad_along_axis(
-    arr: np.ndarray, pad_to: int, axis: int = 0, fill_value: float = 0.0
-) -> np.ndarray:
+def pad_along_axis(arr: np.ndarray, pad_to: int, axis: int = 0, fill_value: float = 0.0) -> np.ndarray:
     pad_size = pad_to - arr.shape[axis]
     if pad_size <= 0:
         return arr
@@ -65,9 +63,7 @@ def load_d4rl_trajectories(
         if dataset["terminals"][i] or dataset["timeouts"][i]:
             episode_data = {k: np.array(v, dtype=np.float32) for k, v in data_.items()}
             # return-to-go if gamma=1.0, just discounted returns else
-            episode_data["returns"] = discounted_cumsum(
-                episode_data["rewards"], gamma=gamma
-            )
+            episode_data["returns"] = discounted_cumsum(episode_data["rewards"], gamma=gamma)
             traj.append(episode_data)
             traj_len.append(episode_data["actions"].shape[0])
             # reset trajectory buffer
@@ -83,7 +79,7 @@ def load_d4rl_trajectories(
 
 
 class BaseD4RLDataset(Dataset):
-    def __init__(self, env_name: str, seq_len: int = 10, reward_scale: float = 1.0):
+    def __init__(self, env_name: str, seq_len: int = 20, reward_scale: float = 1.0):
         self.env_name = env_name
         self.dataset, info = load_d4rl_trajectories(env_name, gamma=1.0)
         self.info = info
@@ -107,9 +103,8 @@ class BaseD4RLDataset(Dataset):
         states = (states - self.state_mean) / self.state_std
         returns = returns * self.reward_scale
         # pad up to seq_len if needed
-        mask = np.hstack(
-            [np.ones(states.shape[0]), np.zeros(self.seq_len - states.shape[0])]
-        )
+        mask = np.hstack([np.ones(states.shape[0], dtype=int), np.zeros(self.seq_len - states.shape[0], dtype=int)])
+
         if states.shape[0] < self.seq_len:
             states = pad_along_axis(states, pad_to=self.seq_len)
             actions = pad_along_axis(actions, pad_to=self.seq_len)
@@ -139,9 +134,7 @@ class D4rlDataset(BaseD4RLDataset):
 
     def __getitem__(self, idx: int):
         traj_idx, sample_idx = self.dataset_indices[idx]
-        states, actions, returns, rewards, time_steps, mask = self._prepare_sample(
-            traj_idx, sample_idx
-        )
+        states, actions, returns, rewards, time_steps, mask = self._prepare_sample(traj_idx, sample_idx)
 
         return EpisodeData(
             observations=states,
@@ -160,9 +153,7 @@ class IterableD4rlDataset(BaseD4RLDataset, IterableDataset):
     def __iter__(self):
         while True:
             traj_idx = np.random.choice(len(self.dataset), p=self.sample_prob)
-            start_idx = random.randint(
-                0, self.dataset[traj_idx]["rewards"].shape[0] - 1
-            )
+            start_idx = random.randint(0, self.dataset[traj_idx]["rewards"].shape[0] - 1)
             yield self._prepare_sample(traj_idx, start_idx)
 
 

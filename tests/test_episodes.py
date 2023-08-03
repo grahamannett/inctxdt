@@ -1,21 +1,13 @@
-from typing import List, Optional
 import unittest
 
 import torch
-import time
+
 from inctxdt.datasets import AcrossEpisodeDataset, MinariDataset, MultipleMinariDataset
 from inctxdt.batch import Batch, Collate, return_fn_from_episodes
 
-
-def collate_fn(batch):
-    breakpoint()
-
-
 batch_size = 4
-
-dataset_names = ["pointmaze-open-dense-v1", "pointmaze-umaze-v1"]
-
 device = "cuda" if torch.cuda.is_available() else "cpu"
+dataset_names = ["pointmaze-open-dense-v1", "pointmaze-umaze-v1"]
 
 # idk if i need this
 # print("warming up with random tensor to device")
@@ -31,9 +23,7 @@ class TestEpisodes(unittest.TestCase):
         batch_size = 4
         ds = MinariDataset(env_name="pointmaze-medium-v1")
 
-        dl = torch.utils.data.DataLoader(
-            ds, batch_size=batch_size, shuffle=True, collate_fn=Collate(device=device)
-        )
+        dl = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=True, collate_fn=Collate(device=device))
         for batch in dl:
             batch = batch.to(device)
             self.assertTrue(str(batch.actions.device) == device)
@@ -49,9 +39,7 @@ class TestCombinedDataset(unittest.TestCase):
     def test_default_collate(self):
         datasets = [MinariDataset(env_name=env_name) for env_name in dataset_names]
         dataset = MultipleMinariDataset(datasets)
-        dl = torch.utils.data.DataLoader(
-            dataset, batch_size=4, shuffle=True, collate_fn=Collate(device=device)
-        )
+        dl = torch.utils.data.DataLoader(dataset, batch_size=4, shuffle=True, collate_fn=Collate(device=device))
         for idx, batch in enumerate(dl):
             batch = batch.to(device)
             self.assertTrue(batch.observations.shape[0] == batch_size)
@@ -65,9 +53,7 @@ class TestCombinedDataset(unittest.TestCase):
             dataset,
             batch_size=4,
             shuffle=True,
-            collate_fn=Collate(
-                device=device, return_fn=return_fn_from_episodes(batch_first=True)
-            ),
+            collate_fn=Collate(device=device, return_fn=return_fn_from_episodes(batch_first=True)),
         )
         for idx, batch in enumerate(dl):
             batch = batch.to(device)
