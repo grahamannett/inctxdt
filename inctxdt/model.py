@@ -38,7 +38,7 @@ class TransformerBlock(nn.Module):
 
     def get_casual_mask(self, x: torch.Tensor) -> torch.Tensor:
         if x.shape[1] > self.causal_mask.shape[0]:
-            return ~torch.tril(torch.ones(x.shape[1], x.shape[1])).to(bool).to(x.device)
+            return ~torch.tril(torch.ones(x.shape[1], x.shape[1], dtype=bool)).to(x.device)
 
         return self.causal_mask[: x.shape[1], : x.shape[1]]
 
@@ -101,8 +101,9 @@ class SequentialActionHeadActionDim(nn.Module):
         batch_size, seq_len = x.shape[0], x.shape[1] // self.subtypes
 
         # go from [batch_size, seq_len * subtypes, emb_dim] -> [batch_size, subtypes, seq_len, emb_dim]
-        x = x.reshape(batch_size, seq_len, 3, self.embedding_dim).permute(0, 2, 1, 3)
-        x_postnorm = self.norm(x)
+        x_ = x.reshape(batch_size, seq_len, 3, self.embedding_dim).permute(0, 2, 1, 3)
+        x_postnorm = self.norm(x_)
+        breakpoint()
 
         # stack along this dim realistically we probably dont need this but its confusing otherwise
         # [batch_size, len(stack_idxs), ]
@@ -152,6 +153,7 @@ class DecisionTransformer(nn.Module):
         self.state_emb = nn.Linear(state_dim, embedding_dim)
         self.action_emb = nn.Linear(action_dim, embedding_dim)
         self.return_emb = nn.Linear(1, embedding_dim)
+        self.single_action_emb = nn.Linear(1, embedding_dim)
 
         self.blocks = nn.ModuleList(
             [
@@ -204,12 +206,21 @@ class DecisionTransformer(nn.Module):
         state_emb = self.state_emb(states) + time_emb
         act_emb = self.action_emb(actions) + time_emb
 
+        single_acts = actions.unsqueeze(-2)
+        # breakpoint()
+        sact_emb = self.single_action_emb(actions.unsqueeze(-1))
+
         # [batch_size, seq_len * 3, emb_dim], (r_0, s_0, a_0, r_1, s_1, a_1, ...)
-        sequence = (
-            torch.stack([ret_emb, state_emb, act_emb], dim=1)
-            .permute(0, 2, 1, 3)
-            .reshape(batch_size, 3 * seq_len, self.embedding_dim)
-        )
+        # sequence = torch.stack([ret_emb, state_emb, act_emb], dim=2).reshape(
+        #     batch_size, 3 * seq_len, self.embedding_dim
+        # )
+
+        # these first 2 are equiv to just stacking in
+        # sequence = (
+        #     torch.stack([ret_emb, state_emb, act_emb], dim=1)
+        #     .permute(0, 2, 1, 3)
+        #     .reshape(batch_size, 3 * seq_len, self.embedding_dim)
+        # )
 
         # if mask is not None:
         #     breakpoint()
