@@ -58,11 +58,15 @@ def run_autoregressive(config, dataset, accelerator=None):
 
 
 def main():
-    config = config_tool.get()
+    env_name = "halfcheetah-medium-v2"
+    config = config_tool.get(env_name=env_name)
+    print(config)
 
     accelerator = Accelerator()
 
-    ds = D4rlDataset(env_name="halfcheetah-medium-v2")
+    ds = D4rlDataset(env_name=config.env_name, seq_len=config.seq_len)
+    env_spec = config.get_env_spec()
+    alt_env_spec = config.get_env_spec("hopper-medium-v0")
     # ds = D4rlDataset(env_name="pointmaze-medium-v1")
     sample = ds[0]
 

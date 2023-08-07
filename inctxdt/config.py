@@ -1,45 +1,65 @@
 from dataclasses import dataclass
-from typing import NamedTuple, Tuple
+from typing import Optional, Tuple
 import torch
 from distutils.util import strtobool
 
+
 _warned_attrs = set()
+
+
+def _get_env_spec(env_name: str) -> Tuple[int, int]:
+    import gym  # might need gymnasium
+
+    env = gym.make(env_name)
+
+    action_dim = env.action_space.shape[0]
+    state_dim = env.observation_space.shape[0]
+    return action_dim, state_dim
 
 
 @dataclass
 class EnvSpec:
     episode_len: int
     seq_len: int
+    env_name: str
 
-    action_dim: int
-    state_dim: int
+    action_dim: int = None
+    state_dim: int = None
+
+    def __post_init__(self):
+        if (self.action_dim is None) or (self.state_dim is None):
+            self.action_dim, self.state_dim = _get_env_spec(self.env_name)
+
+    # @classmethod
 
 
+@dataclass
 class config_tool:
     env_name: str = "pointmaze-umaze-v1"
     device: str = "cpu"
 
     epochs: int = 1
-    batch_size: int = 32
     num_workers: int = 8
+    batch_size: int = 32
+    n_batches: int = -1
 
     # dataset
     seq_len: int = 20
     episode_len: int = 1000
 
-    num_layers: int = 4
-    num_heads: int = 4
+    num_layers: int = 6
+    num_heads: int = 8
 
     adist: bool = False  # accelerate distributed
     dist: bool = False  # pytorch distributed
 
     # optim
-    learning_rate: float = 1e-4
     betas: Tuple[float, float] = (0.9, 0.999)
+    learning_rate: float = 1e-4
     weight_decay: float = 1e-4
-    warmup_steps: int = 10
+    warmup_steps: int = 100
 
-    clip_grad: bool = True
+    clip_grad: Optional[float] = 0.25
 
     # eval
     reward_scale: float = 0.001
@@ -48,6 +68,9 @@ class config_tool:
     _debug: bool = False
     debug_note: str = ""
     __singleton = None
+
+    def __post_init__(self):
+        pass
 
     def __init__(self, *args, **kwargs):
         pass
@@ -62,27 +85,26 @@ class config_tool:
 
         return None
 
-    def get_env_spec(self, env: str | int = None):
-        if env is None or isinstance(env, str):
-            import gym  # might need gymnasium
-
-            env = gym.make(self.env_name)
-
-        action_dim = env.action_space.shape[0]
-        state_dim = env.observation_space.shape[0]
+    def get_env_spec(self, env_name: str = None):
+        env_name = env_name or self.env_name
 
         return EnvSpec(
             episode_len=self.episode_len,
             seq_len=self.seq_len,
-            action_dim=action_dim,
-            state_dim=state_dim,
+            env_name=env_name,
+            # action_dim=action_dim,
+            # state_dim=state_dim,
         )
 
     @classmethod
-    def get(cls):
+    def get(cls, **kwargs):
         """
         helper class to make singleton config object
         """
+        # allow passed in kwargs to override
+        for k, v in kwargs.items():
+            setattr(cls, k, v)
+
         import argparse
 
         parser = argparse.ArgumentParser()
@@ -119,16 +141,6 @@ class config_tool:
             cls.__singleton = cls()
 
         _debug_note(cls.debug_note.upper())
-        # import atexit
-
-        # def _print_info():
-        #     print("===" * 30)
-        #     print("\t--RUN/DEBUG-NOTE:")
-        #     print("\n\n==>🤠|>", cls.debug_note.upper(), ==|""🤠<==\n\n")
-        #     print("===" * 30)
-
-        # atexit.register(_print_info)
-        # _print_info()
 
         return cls.__singleton
 

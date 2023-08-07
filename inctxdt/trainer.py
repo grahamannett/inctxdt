@@ -1,15 +1,20 @@
-from typing import Tuple
+from typing import Tuple, Union
 
+import d4rl
+import gym
+
+import time
+
+# NOTE: THIS IS BECAUSE IM USING GYM.MAKE HERE.  NEED TO FIX
+import numpy as np
 import torch
 import torch.nn as nn
-
 from tqdm.auto import tqdm, trange
 
-# from gymnasium import Env
-
-from inctxdt.evaluation import eval_rollout
 from inctxdt.batch import Batch
-from inctxdt.config import config_tool, EnvSpec
+from inctxdt.config import EnvSpec, config_tool
+from inctxdt.evaluation import eval_rollout, venv_eval_rollout
+from inctxdt.model_output import ModelOutput
 
 
 def train(
@@ -17,18 +22,32 @@ def train(
     dataloader: torch.utils.data.DataLoader,
     config: config_tool = config_tool,
     accelerator: type = None,
-    env: "Env" = None,  # noqa
+    env: gym.Env = None,  # noqa
     optimizer: torch.optim.Optimizer = None,
     scheduler: torch.optim.lr_scheduler.LambdaLR = None,
 ):
     if env is None:
-        env = dataloader.dataset.recover_environment()
+        _state_mean = dataloader.dataset.state_mean.squeeze()
+        _state_std = dataloader.dataset.state_std.squeeze()
 
-    env_spec = EnvSpec(  # S params is sequence params
-        model.action_dim, model.state_dim, model.episode_len, model.seq_len
+        def _env_fn():
+            env_ = gym.make(dataloader.dataset.env_name)
+            env_ = gym.wrappers.TransformObservation(env_, lambda state_: (state_ - _state_mean) / _state_std)
+            env_ = gym.wrappers.TransformReward(env_, lambda rew_: rew_ * config.reward_scale)
+            return env_
+
+        env = _env_fn()
+        venv = gym.vector.SyncVectorEnv([_env_fn for _ in range(config.eval_episodes)])
+
+    env_spec = EnvSpec(
+        action_dim=model.action_dim,
+        state_dim=model.state_dim,
+        env_name=dataloader.dataset.env_name,
+        episode_len=model.episode_len,
+        seq_len=model.seq_len,
     )
-    device = config.device
-    _main_proc = accelerator.is_local_main_process if accelerator else True
+
+    _main_proc = accelerator.is_local_main_process
 
     if optimizer is None:
         optimizer = torch.optim.AdamW(
@@ -43,41 +62,31 @@ def train(
             lambda steps: min((steps + 1) / config.warmup_steps, 1),
         )
 
-    if accelerator:
-        model, dataloader, optimizer, scheduler = accelerator.prepare(
-            model, dataloader, optimizer, scheduler
-        )
-        device = accelerator.device
-    else:
-        model = model.to(config.device)
+    model, dataloader, optimizer, scheduler = accelerator.prepare(model, dataloader, optimizer, scheduler)
 
     def data_iter_fn(batch_iter) -> Tuple[int, Batch]:
         for batch_idx, batch in batch_iter:
-            if isinstance(early_end := config.batch_early_termination, (int, float)):
-                if batch_idx >= early_end:
-                    return
+            if (config.n_batches not in [-1, None]) and (batch_idx > config.n_batches):
+                return
 
             yield batch_idx, batch
 
-    def handle_batch(batch) -> Batch:
-        if accelerator is None:
-            batch = batch.to(device)
-        return batch
-
-    def handle_loss(pred, batch) -> torch.Tensor:
-        target, mask = batch.actions, batch.mask
+    def handle_loss(model_output: ModelOutput, batch: Batch) -> torch.Tensor:
+        target, mask, pred = batch.actions, batch.mask, model_output.logits
+        # batch_size = target.shape[0]
+        # target = target.view(batch_size, -1)
 
         # for mse we need
         if pred.shape != target.shape:
-            pred = pred.view(target.shape)
+            pred = pred.reshape(target.shape)
+            # breakpoint()
+            # pred = pred.view(target.shape)
+            # pred, target = pred.view(len(pred), -1), target.view(len(target), -1)
 
         loss = nn.functional.mse_loss(pred, target, reduction="none")
         loss = (loss * mask.unsqueeze(-1)).mean()
 
-        if accelerator:
-            accelerator.backward(loss)
-        else:
-            loss.backward()
+        accelerator.backward(loss)
         return loss
 
     def post_handle_loss(m):
@@ -88,25 +97,26 @@ def train(
         scheduler.step()
 
     epoch_pbar = trange(config.epochs, desc=f"Epoch", disable=not _main_proc, leave=False)
-
+    env.seed(42)
     for epoch in epoch_pbar:
-        model.train()
         epoch_loss = 0
 
         pbar = tqdm(dataloader, disable=not _main_proc)
 
+        model.train()
         for batch_idx, batch in data_iter_fn(enumerate(pbar)):
-            batch = handle_batch(batch)
+            padding_mask = ~batch.mask.to(torch.bool)
 
             model_output = model.forward(
                 states=batch.observations,
                 actions=batch.actions,
                 returns_to_go=batch.returns_to_go,
                 time_steps=batch.timesteps,
-                mask=batch.mask,
+                # mask=batch.mask,
+                padding_mask=padding_mask,
             )
 
-            loss = handle_loss(model_output.logits, batch)
+            loss = handle_loss(model_output, batch)
             post_handle_loss(model)
 
             epoch_loss += loss.item()
@@ -115,11 +125,14 @@ def train(
 
         epoch_pbar.set_description(f"Epoch{epoch} loss: {epoch_loss:.4f}")
 
-        eval_info = eval_rollout(
-            model,
-            env=env,
-            env_spec=env_spec,
-            target_return=1000.0,
-            device=device,
+        eval_ret, eval_len = venv_eval_rollout(model, venv, env_spec, target_return=12000.0, device=accelerator.device)
+        eval_ret = eval_ret / config.reward_scale
+
+        norm_score = env.get_normalized_score(eval_ret) * 100
+
+        accelerator.print(
+            f"==>Eval: {eval_ret.mean().item():.2f} len: {eval_len.float().mean().item():.2f} norm-score {norm_score.mean().item():.2f}"
         )
-        print(f"Eval: {eval_info}")
+        epoch_pbar.set_description(
+            f"Epoch{epoch} loss: {epoch_loss:.4f} eval: {eval_ret.mean().item():.2f} | norm_score {norm_score.mean().item():.2f}"
+        )
