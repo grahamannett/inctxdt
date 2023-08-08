@@ -5,3 +5,6 @@
 compare/wandb/
 
 output/
+compare/
+conf/
+experiments/
