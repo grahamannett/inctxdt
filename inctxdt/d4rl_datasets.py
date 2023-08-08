@@ -8,6 +8,7 @@ import numpy as np
 from torch.utils.data import Dataset, IterableDataset
 from tqdm import trange
 
+from inctxdt.config import _envs_registered
 from inctxdt.episode_data import EpisodeData
 
 
@@ -49,9 +50,9 @@ def discounted_cumsum(x: np.ndarray, gamma: float) -> np.ndarray:
 
 
 def load_d4rl_trajectories(
-    env_name: str, gamma: float = 1.0
+    dataset_name: str, gamma: float = 1.0
 ) -> Tuple[List[DefaultDict[str, np.ndarray]], Dict[str, Any]]:
-    dataset = gym.make(env_name).get_dataset()
+    dataset = gym.make(dataset_name).get_dataset()
     traj, traj_len = [], []
 
     data_ = defaultdict(list)
@@ -79,9 +80,9 @@ def load_d4rl_trajectories(
 
 
 class BaseD4RLDataset(Dataset):
-    def __init__(self, env_name: str, seq_len: int = 20, reward_scale: float = 1.0):
-        self.env_name = env_name
-        self.dataset, info = load_d4rl_trajectories(env_name, gamma=1.0)
+    def __init__(self, dataset_name: str, seq_len: int = 20, reward_scale: float = 1.0):
+        self.dataset_name = dataset_name
+        self.dataset, info = load_d4rl_trajectories(dataset_name, gamma=1.0)
         self.info = info
         self.reward_scale = reward_scale
         self.seq_len = seq_len
@@ -91,6 +92,14 @@ class BaseD4RLDataset(Dataset):
         # https://github.com/kzl/decision-transformer/blob/e2d82e68f330c00f763507b3b01d774740bee53f/gym/experiment.py#L116 # noqa
         self.sample_prob = info["traj_lens"] / info["traj_lens"].sum()
 
+        self.register_env()
+
+    def register_env(self):
+        env = self.recover_environment()
+        action_space = env.action_space.shape[0]
+        state_space = env.observation_space.shape[0]
+        _envs_registered[self.dataset_name] = {"action_space": action_space, "state_space": state_space}
+
     def _prepare_sample(self, traj_idx, start_idx):
         traj = self.dataset[traj_idx]
         # https://github.com/kzl/decision-transformer/blob/e2d82e68f330c00f763507b3b01d774740bee53f/gym/experiment.py#L128 # noqa
@@ -98,7 +107,7 @@ class BaseD4RLDataset(Dataset):
         actions = traj["actions"][start_idx : start_idx + self.seq_len]
         returns = traj["returns"][start_idx : start_idx + self.seq_len]
         rewards = traj["rewards"][start_idx : start_idx + self.seq_len]
-        time_steps = np.arange(start_idx, start_idx + self.seq_len)
+        timesteps = np.arange(start_idx, start_idx + self.seq_len)
 
         states = (states - self.state_mean) / self.state_std
         returns = returns * self.reward_scale
@@ -110,7 +119,7 @@ class BaseD4RLDataset(Dataset):
             actions = pad_along_axis(actions, pad_to=self.seq_len)
             returns = pad_along_axis(returns, pad_to=self.seq_len)
 
-        return states, actions, returns, rewards, time_steps, mask
+        return states, actions, returns, rewards, timesteps, mask
 
     def recover_environment(self) -> gym.Env:
         """Recover the Gymnasium environment used to create the dataset.
@@ -118,12 +127,12 @@ class BaseD4RLDataset(Dataset):
         Returns:
             environment: Gymnasium environment
         """
-        return gym.make(self.env_name)
+        return gym.make(self.dataset_name)
 
 
 class D4rlDataset(BaseD4RLDataset):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, dataset_name: str, *args, **kwargs):
+        super().__init__(dataset_name=dataset_name, *args, **kwargs)
         self.dataset_indices = []
 
         for i, traj in enumerate(self.dataset):
@@ -134,18 +143,18 @@ class D4rlDataset(BaseD4RLDataset):
 
     def __getitem__(self, idx: int):
         traj_idx, sample_idx = self.dataset_indices[idx]
-        states, actions, returns, rewards, time_steps, mask = self._prepare_sample(traj_idx, sample_idx)
+        states, actions, returns, rewards, timesteps, mask = self._prepare_sample(traj_idx, sample_idx)
 
         return EpisodeData(
-            observations=states,
+            states=states,
             actions=actions,
             total_timesteps=self.seq_len,
             rewards=rewards,
             returns_to_go=returns,
             id=idx,
-            timesteps=time_steps,
+            timesteps=timesteps,
             mask=mask,
-            env_name=self.env_name,
+            env_name=self.dataset_name,
         )
 
 
@@ -158,7 +167,7 @@ class IterableD4rlDataset(BaseD4RLDataset, IterableDataset):
 
 
 if __name__ == "__main__":
-    env_name = "halfcheetah-medium-v2"
+    dataset_name = "halfcheetah-medium-v2"
     seq_len = 20
     reward_scale = 0.001
-    dataset = D4rlDataset(env_name, seq_len=seq_len, reward_scale=reward_scale)
+    dataset = D4rlDataset(dataset_name, seq_len=seq_len, reward_scale=reward_scale)

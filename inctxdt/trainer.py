@@ -16,6 +16,8 @@ from inctxdt.config import EnvSpec, config_tool
 from inctxdt.evaluation import eval_rollout, venv_eval_rollout
 from inctxdt.model_output import ModelOutput
 
+from inctxdt.env_helper import get_env
+
 
 def train(
     model: nn.Module,
@@ -27,22 +29,12 @@ def train(
     scheduler: torch.optim.lr_scheduler.LambdaLR = None,
 ):
     if env is None:
-        _state_mean = dataloader.dataset.state_mean.squeeze()
-        _state_std = dataloader.dataset.state_std.squeeze()
-
-        def _env_fn():
-            env_ = gym.make(dataloader.dataset.env_name)
-            env_ = gym.wrappers.TransformObservation(env_, lambda state_: (state_ - _state_mean) / _state_std)
-            env_ = gym.wrappers.TransformReward(env_, lambda rew_: rew_ * config.reward_scale)
-            return env_
-
-        env = _env_fn()
-        venv = gym.vector.SyncVectorEnv([_env_fn for _ in range(config.eval_episodes)])
+        env, venv = get_env(dataset=dataloader.dataset, config=config)
 
     env_spec = EnvSpec(
         action_dim=model.action_dim,
         state_dim=model.state_dim,
-        env_name=dataloader.dataset.env_name,
+        env_name=dataloader.dataset.dataset_name,
         episode_len=model.episode_len,
         seq_len=model.seq_len,
     )
@@ -97,21 +89,24 @@ def train(
         scheduler.step()
 
     epoch_pbar = trange(config.epochs, desc=f"Epoch", disable=not _main_proc, leave=False)
-    env.seed(42)
+
     for epoch in epoch_pbar:
         epoch_loss = 0
 
         pbar = tqdm(dataloader, disable=not _main_proc)
 
         model.train()
+        batch: Batch
         for batch_idx, batch in data_iter_fn(enumerate(pbar)):
-            padding_mask = ~batch.mask.to(torch.bool)
+            # padding_mask = ~batch.mask.to(torch.bool)
+
+            padding_mask = batch.make_padding_mask()
 
             model_output = model.forward(
-                states=batch.observations,
+                states=batch.states,
                 actions=batch.actions,
                 returns_to_go=batch.returns_to_go,
-                time_steps=batch.timesteps,
+                timesteps=batch.timesteps,
                 # mask=batch.mask,
                 padding_mask=padding_mask,
             )
@@ -128,11 +123,14 @@ def train(
         eval_ret, eval_len = venv_eval_rollout(model, venv, env_spec, target_return=12000.0, device=accelerator.device)
         eval_ret = eval_ret / config.reward_scale
 
-        norm_score = env.get_normalized_score(eval_ret) * 100
+        norm_score = 0.0
+
+        if hasattr(env, "get_normalized_score"):
+            norm_score = (env.get_normalized_score(eval_ret) * 100).mean().item()
 
         accelerator.print(
-            f"==>Eval: {eval_ret.mean().item():.2f} len: {eval_len.float().mean().item():.2f} norm-score {norm_score.mean().item():.2f}"
+            f"==>Eval: {eval_ret.mean().item():.2f} len: {eval_len.float().mean().item():.2f} norm-score {norm_score:.2f}"
         )
         epoch_pbar.set_description(
-            f"Epoch{epoch} loss: {epoch_loss:.4f} eval: {eval_ret.mean().item():.2f} | norm_score {norm_score.mean().item():.2f}"
+            f"Epoch{epoch} loss: {epoch_loss:.4f} eval: {eval_ret.mean().item():.2f} | norm_score {norm_score:.2f}"
         )

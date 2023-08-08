@@ -22,7 +22,7 @@ class EpisodeData:
     This is the object returned by :class:`minari.MinariDataset.sample_episodes`.
     """
 
-    observations: np.ndarray
+    states: np.ndarray
     actions: np.ndarray
     total_timesteps: Optional[int | List[int]] = None
 
@@ -41,11 +41,11 @@ class EpisodeData:
 
     def __post_init__(self):
         if self.total_timesteps is None:
-            self.total_timesteps = len(self.observations)
+            self.total_timesteps = len(self.states)
 
         if self.timesteps is None:
             self.timesteps = np.arange(
-                max(self.total_timesteps, len(self.observations))
+                max(self.total_timesteps, len(self.states))
             )
 
     def __repr__(self) -> str:
@@ -55,7 +55,7 @@ class EpisodeData:
             f"id={repr(self.id) if self.id else '␀'}, "
             f"seed={repr(self.seed) if self.seed else '␀'}, "
             f"total_timesteps={self.total_timesteps if self.total_timesteps else 'NULL'}, "
-            f"observations={EpisodeData._repr_space_values(self.observations)}, "
+            f"states={EpisodeData._repr_space_values(self.states)}, "
             f"actions={EpisodeData._repr_space_values(self.actions)}, "
             f"rewards=ndarray of {len(self.rewards) if self.rewards is not None else 'NULL'} floats, "
             f"returns_to_go=ndarray of {len(self.returns_to_go) if self.returns_to_go is not None else 'NULL'} floats, "

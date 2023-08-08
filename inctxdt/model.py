@@ -4,10 +4,11 @@ from typing import List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from inctxdt.config import EnvSpec
 
+from inctxdt.config import EnvSpec
+from inctxdt.layers.base_layers import OriginalActionHead
+from inctxdt.model_layers import SequentialAction, StackedEnvEmbedding, DynamicLayers
 from inctxdt.model_output import ModelOutput
-from inctxdt.model_layers import StackedEnvEmbedding, StackedActionDimHead, SequentialAction, BaseEmbeddingOutput
 
 
 # Decision Transformer implementation
@@ -101,19 +102,22 @@ class DecisionTransformer(nn.Module):
         )
 
         # model_cls = SequentialAction
-        Model_Class = StackedEnvEmbedding
-        self.embed_output_layers = Model_Class(
-            embedding_dim=embedding_dim,
-            episode_len=episode_len,
-            seq_len=seq_len,
-            state_dim=state_dim,
-            action_dim=action_dim,
-            stack_idxs=[0, 1],
-            kernel_size=(1, 2),
-            env_spec=env_spec,
-        )
+        # Model_Class = StackedEnvEmbedding
+        # self.embed_output_layers = Model_Class(
+        #     embedding_dim=embedding_dim,
+        #     episode_len=episode_len,
+        #     seq_len=seq_len,
+        #     state_dim=state_dim,
+        #     action_dim=action_dim,
+        #     stack_idxs=[0, 1],
+        #     kernel_size=(1, 2),
+        # )
+        # self.embed_output_layers.patch_parent(parent=self)
 
+        self.embed_output_layers = DynamicLayers(env_spec=env_spec, embedding_dim=embedding_dim)
         self.embed_output_layers.patch_parent(parent=self)
+
+        # self.forward_output = OriginalActionHead(action_dim=action_dim, embedding_dim=embedding_dim)
 
         self.seq_len = seq_len
         self.embedding_dim = embedding_dim
@@ -139,15 +143,15 @@ class DecisionTransformer(nn.Module):
         states: torch.Tensor,  # [batch_size, seq_len, state_dim]
         actions: torch.Tensor,  # [batch_size, seq_len, action_dim]
         returns_to_go: torch.Tensor,  # [batch_size, seq_len]
-        time_steps: torch.Tensor,  # [batch_size, seq_len]
+        timesteps: torch.Tensor,  # [batch_size, seq_len]
         mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
         padding_mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
     ) -> torch.FloatTensor:
-        sequence, padding_mask = self.embed_input(
+        sequence, padding_mask = self.forward_embed(
             states=states,
             actions=actions,
             returns_to_go=returns_to_go,
-            time_steps=time_steps,
+            timesteps=timesteps,
             padding_mask=padding_mask,
         )
 
@@ -157,7 +161,7 @@ class DecisionTransformer(nn.Module):
         for block in self.blocks:
             out = block(out, padding_mask=padding_mask)
 
-        logits = self.action_head(x=out)
+        logits = self.forward_output(x=out)
 
         return ModelOutput(logits=logits)
 
@@ -175,7 +179,7 @@ if __name__ == "__main__":
     states = torch.rand(batch_size, seq_len, state_dim)
     actions = torch.rand(batch_size, seq_len, action_dim)
     returns_to_go = torch.rand(batch_size, seq_len)
-    time_steps = torch.arange(seq_len, dtype=torch.long).view(1, -1).repeat(batch_size, 1)
+    timesteps = torch.arange(seq_len, dtype=torch.long).view(1, -1).repeat(batch_size, 1)
 
     padding_mask = torch.ones(batch_size, seq_len, dtype=torch.bool)
 
@@ -188,5 +192,5 @@ if __name__ == "__main__":
         num_layers=2,
         num_heads=2,
     )
-    out = model(states=states, actions=actions, returns_to_go=returns_to_go, time_steps=time_steps)
+    out = model(states=states, actions=actions, returns_to_go=returns_to_go, timesteps=timesteps)
     breakpoint()

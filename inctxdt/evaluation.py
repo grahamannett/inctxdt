@@ -15,11 +15,11 @@ from inctxdt.model import DecisionTransformer
 from inctxdt.model_output import ModelOutput
 
 
-def fix_obs_dict(obs_dict: Dict[str, np.array] | np.array) -> np.array:
-    if not isinstance(obs_dict, dict):
-        return obs_dict
-
-    return np.concatenate([obs_dict[key] for key in obs_dict.keys()], axis=-1)
+def fix_obs_dict(obs: Dict[str, np.array] | np.array) -> np.array:
+    if isinstance(obs, dict):
+        # np.concatenate([obs_dict[key] for key in obs_dict.keys()], axis=-1)
+        obs = obs["observation"]
+    return obs
 
 
 # Training and evaluation logic
@@ -35,8 +35,7 @@ def eval_rollout(
     states = torch.zeros(1, env_spec.episode_len + 1, env_spec.state_dim, dtype=torch.float, device=device)
     actions = torch.zeros(1, env_spec.episode_len, env_spec.action_dim, dtype=torch.float, device=device)
     returns = torch.zeros(1, env_spec.episode_len + 1, dtype=torch.float, device=device)
-    time_steps = torch.arange(env_spec.episode_len, dtype=torch.long, device=device)
-    time_steps = time_steps.view(1, -1)
+    timesteps = torch.arange(env_spec.episode_len, dtype=torch.long, device=device).view(1, -1)
 
     states_init = env.reset()
 
@@ -54,10 +53,10 @@ def eval_rollout(
         # (as model will predict last, actual last values are not important)
 
         output = model(  # fix this noqa!!!
-            states[:, : step + 1][:, -env_spec.seq_len :],  # noqa
-            actions[:, : step + 1][:, -env_spec.seq_len :],  # noqa
-            returns[:, : step + 1][:, -env_spec.seq_len :],  # noqa
-            time_steps[:, : step + 1][:, -env_spec.seq_len :],  # noqa
+            states=states[:, : step + 1][:, -env_spec.seq_len :],  # noqa
+            actions=actions[:, : step + 1][:, -env_spec.seq_len :],  # noqa
+            returns_to_go=returns[:, : step + 1][:, -env_spec.seq_len :],  # noqa
+            timesteps=timesteps[:, : step + 1][:, -env_spec.seq_len :],  # noqa
         )
         logits = output.logits
 
@@ -109,12 +108,14 @@ def venv_eval_rollout(
     states = torch.zeros(num_envs, episode_len + 1, env_spec.state_dim, dtype=torch.float, device=device)
     actions = torch.zeros(num_envs, episode_len, env_spec.action_dim, dtype=torch.float, device=device)
     returns = torch.zeros(num_envs, episode_len + 1, dtype=torch.float, device=device)
-    time_steps = torch.arange(env_spec.episode_len, dtype=torch.long, device=device)
-    time_steps = time_steps.repeat(num_envs, 1).view(num_envs, -1)
+    timesteps = torch.arange(env_spec.episode_len, dtype=torch.long, device=device)
+    timesteps = timesteps.repeat(num_envs, 1).view(num_envs, -1)
 
     states_init = venv.reset()
+    if len(states_init) == 2:
+        states_init = states_init[0]
 
-    _check_states(states_init)  # # states_init = fix_obs_dict(states_init)
+    # _check_states(states_init)  # # states_init = fix_obs_dict(states_init)
 
     states[:, 0] = torch.as_tensor(states_init, device=device)
     returns[:, 0] = torch.as_tensor(target_return, device=device)
@@ -136,7 +137,7 @@ def venv_eval_rollout(
             states[~dones, : step + 1][:, -seq_len:],  # noqa
             actions[~dones, : step + 1][:, -seq_len:],  # noqa
             returns[~dones, : step + 1][:, -seq_len:],  # noqa
-            time_steps[~dones, : step + 1][:, -seq_len:],  # noqa
+            timesteps[~dones, : step + 1][:, -seq_len:],  # noqa
         )
 
         # predicted_action = output.logits.squeeze()
@@ -148,10 +149,16 @@ def venv_eval_rollout(
         # unpack
         next_state, rew, *step_dones, info = venv.step(predicted_action)
 
-        # NOTE: there will be truncated and terminated later - throw error and catch this
-        assert len(step_dones) == 1, "not sure if i handle these correctly. need to handle terminated/truncated"
+        if len(step_dones) == 2:
+            terminated, truncated = step_dones
+            step_dones = terminated | truncated
+        else:
+            step_dones = step_dones[0]
 
-        dones[step_dones[0]] = True
+        # NOTE: there will be truncated and terminated later - throw error and catch this
+        # assert len(step_dones) == 1, "not sure if i handle these correctly. need to handle terminated/truncated"
+
+        dones[step_dones] = True
 
         # next_state = fix_obs_dict(next_state)
 

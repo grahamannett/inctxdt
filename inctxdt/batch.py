@@ -26,18 +26,14 @@ class FieldList(list):
         if (len(self) > 0) and (self[0] is None):
             return
 
-        return torch.nn.utils.rnn.pad_sequence(
-            [torch.from_numpy(a) for a in self], batch_first=self.batch_first
-        )
+        return torch.nn.utils.rnn.pad_sequence([torch.from_numpy(a) for a in self], batch_first=self.batch_first)
 
     # if you need additional args on them you can do this:
     def tensor_(self, *args, **kwargs):
         return torch.tensor(self, *args, **kwargs)
 
     def pad_tensor_(self, **kwargs):
-        return torch.nn.utils.rnn.pad_sequence(
-            [torch.from_numpy(a) for a in self], **kwargs
-        )
+        return torch.nn.utils.rnn.pad_sequence([torch.from_numpy(a) for a in self], **kwargs)
 
 
 class EpisodeList(list):
@@ -48,9 +44,7 @@ class EpisodeList(list):
         self.batch_first = batch_first
 
     def __getattr__(self, attr):
-        return FieldList(
-            [getattr(ep, attr) for ep in self], batch_first=self.batch_first
-        )
+        return FieldList([getattr(ep, attr) for ep in self], batch_first=self.batch_first)
 
     def field(self, field: str, _default=None):
         return [getattr(ep, field, _default) for ep in self]
@@ -58,7 +52,7 @@ class EpisodeList(list):
 
 @tensorclass
 class Batch:
-    observations: torch.Tensor | TensorDict
+    states: torch.Tensor | TensorDict
     actions: torch.Tensor
     total_timesteps: Optional[torch.Tensor] = None
 
@@ -72,11 +66,14 @@ class Batch:
     id: Optional[torch.Tensor] = None
     env_name: Optional[List[str]] = None
 
+    def make_padding_mask(self):
+        return ~self.mask.to(torch.bool)
+
 
 class Collate:
     def __init__(
         self,
-        device: str = "cpu",
+        device: str = None,
         batch_first: bool = True,
         return_fn: Callable[[List[EpisodeData]], Batch] = None,
     ):
@@ -89,8 +86,8 @@ class Collate:
 
     def default_return_fn(self, episode_list: List[EpisodeData]) -> Batch:
         eps = EpisodeList(episode_list, batch_first=self.batch_first)
-        return Batch(
-            observations=eps.observations.pad_tensor,
+        batch = Batch(
+            states=eps.states.pad_tensor,
             actions=eps.actions.pad_tensor,
             total_timesteps=eps.total_timesteps.tensor,
             rewards=eps.rewards.pad_tensor,
@@ -105,12 +102,14 @@ class Collate:
             batch_size=[len(eps)],
         )
 
+        if self.device:
+            batch = batch.to(self.device)
+        return batch
+
 
 # helper functions for padding and stacking.  Note:
 def from_eps_with_pad(eps, attr: str, batch_first: bool = True) -> torch.Tensor:
-    return torch.nn.utils.rnn.pad_sequence(
-        [torch.from_numpy(getattr(x, attr)) for x in eps], batch_first=batch_first
-    )
+    return torch.nn.utils.rnn.pad_sequence([torch.from_numpy(getattr(x, attr)) for x in eps], batch_first=batch_first)
 
 
 def from_eps(eps: List[EpisodeData], attr: str) -> torch.Tensor:
@@ -122,17 +121,11 @@ def return_fn_from_episodes(batch_first: bool = True, return_class: type = Batch
         return return_class(
             id=from_eps(eps, "id"),
             total_timesteps=from_eps(eps, "total_timesteps"),
-            observations=from_eps_with_pad(
-                eps, "observations", batch_first=batch_first
-            ),
+            states=from_eps_with_pad(eps, "states", batch_first=batch_first),
             actions=from_eps_with_pad(eps, "actions", batch_first=batch_first),
             rewards=from_eps_with_pad(eps, "rewards", batch_first=batch_first),
-            returns_to_go=from_eps_with_pad(
-                eps, "returns_to_go", batch_first=batch_first
-            ),
-            terminations=from_eps_with_pad(
-                eps, "terminations", batch_first=batch_first
-            ),
+            returns_to_go=from_eps_with_pad(eps, "returns_to_go", batch_first=batch_first),
+            terminations=from_eps_with_pad(eps, "terminations", batch_first=batch_first),
             truncations=from_eps_with_pad(eps, "truncations", batch_first=batch_first),
             timesteps=from_eps_with_pad(eps, "timesteps", batch_first=batch_first),
             mask=from_eps_with_pad(eps, "mask", batch_first=batch_first),

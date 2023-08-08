@@ -120,7 +120,7 @@ class DecisionTransformer(nn.Module):
         states: torch.Tensor,  # [batch_size, seq_len, state_dim]
         actions: torch.Tensor,  # [batch_size, seq_len, action_dim]
         returns_to_go: torch.Tensor,  # [batch_size, seq_len]
-        time_steps: torch.Tensor,  # [batch_size, seq_len]
+        timesteps: torch.Tensor,  # [batch_size, seq_len]
         padding_mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
         **kwargs,
     ) -> torch.FloatTensor:
@@ -128,7 +128,7 @@ class DecisionTransformer(nn.Module):
         batch_size, seq_len = states.shape[0], states.shape[1]
         # [batch_size, seq_len, emb_dim]
 
-        time_emb = self.timestep_emb(time_steps)
+        time_emb = self.timestep_emb(timesteps)
         state_emb = self.state_emb(states) + time_emb
         act_emb = self.action_emb(actions) + time_emb
         returns_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb

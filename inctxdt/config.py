@@ -6,11 +6,24 @@ from distutils.util import strtobool
 
 _warned_attrs = set()
 
+_envs_registered = {}
 
-def _get_env_spec(env_name: str) -> Tuple[int, int]:
-    import gym  # might need gymnasium
 
-    env = gym.make(env_name)
+def _get_env_spec(env_name: str = None, dataset_name: str = None) -> Tuple[int, int]:
+    assert env_name or dataset_name, "Must pass in either env_name or dataset_name"
+    if env_name in _envs_registered:
+        return _envs_registered[env_name]["action_space"], _envs_registered[env_name]["state_space"]
+
+    if dataset_name in _envs_registered:
+        return _envs_registered[dataset_name]["action_space"], _envs_registered[dataset_name]["state_space"]
+
+    try:
+        import gym
+
+        env = gym.make(env_name)
+    except Exception as err:
+        print(f"ERROR: Could not load env: {env_name}")
+        raise err
 
     action_dim = env.action_space.shape[0]
     state_dim = env.observation_space.shape[0]
@@ -30,12 +43,10 @@ class EnvSpec:
         if (self.action_dim is None) or (self.state_dim is None):
             self.action_dim, self.state_dim = _get_env_spec(self.env_name)
 
-    # @classmethod
-
 
 @dataclass
 class config_tool:
-    env_name: str = "pointmaze-umaze-v1"
+    dataset_name: str = "pointmaze-umaze-v1"
     device: str = "cpu"
 
     epochs: int = 1
@@ -85,16 +96,17 @@ class config_tool:
 
         return None
 
-    def get_env_spec(self, env_name: str = None):
-        env_name = env_name or self.env_name
-
+    @staticmethod
+    def _get_env_spec(env_name: str, episode_len: int, seq_len: int):
         return EnvSpec(
-            episode_len=self.episode_len,
-            seq_len=self.seq_len,
+            episode_len=episode_len,
+            seq_len=seq_len,
             env_name=env_name,
-            # action_dim=action_dim,
-            # state_dim=state_dim,
         )
+
+    def get_env_spec(self, dataset_name: str = None):
+        dataset_name = dataset_name or self.dataset_name
+        return self._get_env_spec(dataset_name, self.episode_len, self.seq_len)
 
     @classmethod
     def get(cls, **kwargs):
