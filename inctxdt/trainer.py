@@ -1,7 +1,8 @@
 from typing import Tuple, Union
 
-import d4rl
-import gym
+# import d4rl
+# import gym
+import gymnasium
 
 import time
 
@@ -24,20 +25,22 @@ def train(
     dataloader: torch.utils.data.DataLoader,
     config: config_tool = config_tool,
     accelerator: type = None,
-    env: gym.Env = None,  # noqa
     optimizer: torch.optim.Optimizer = None,
     scheduler: torch.optim.lr_scheduler.LambdaLR = None,
+    env_spec: EnvSpec = None,
+    env: gymnasium.Env = None,
+    venv: gymnasium.vector.SyncVectorEnv = None,
 ):
-    if env is None:
-        env, venv = get_env(dataset=dataloader.dataset, config=config)
+    if env is None or env_spec is None:
+        _env_fn, env, venv, obs_dim, act_dim = get_env(dataset=dataloader.dataset, config=config)
 
-    env_spec = EnvSpec(
-        action_dim=model.action_dim,
-        state_dim=model.state_dim,
-        env_name=dataloader.dataset.dataset_name,
-        episode_len=model.episode_len,
-        seq_len=model.seq_len,
-    )
+        env_spec = EnvSpec(
+            action_dim=act_dim.shape[0],  #  or model.action_dim
+            state_dim=obs_dim.shape[0],  # or model.state_dim
+            env_name=dataloader.dataset.dataset_name,
+            episode_len=model.episode_len,
+            seq_len=model.seq_len,
+        )
 
     _main_proc = accelerator.is_local_main_process
 
@@ -65,15 +68,10 @@ def train(
 
     def handle_loss(model_output: ModelOutput, batch: Batch) -> torch.Tensor:
         target, mask, pred = batch.actions, batch.mask, model_output.logits
-        # batch_size = target.shape[0]
-        # target = target.view(batch_size, -1)
 
-        # for mse we need
+        # for mse we need shapes equal
         if pred.shape != target.shape:
             pred = pred.reshape(target.shape)
-            # breakpoint()
-            # pred = pred.view(target.shape)
-            # pred, target = pred.view(len(pred), -1), target.view(len(target), -1)
 
         loss = nn.functional.mse_loss(pred, target, reduction="none")
         loss = (loss * mask.unsqueeze(-1)).mean()
@@ -100,15 +98,12 @@ def train(
         for batch_idx, batch in data_iter_fn(enumerate(pbar)):
             # padding_mask = ~batch.mask.to(torch.bool)
 
-            padding_mask = batch.make_padding_mask()
-
             model_output = model.forward(
                 states=batch.states,
                 actions=batch.actions,
                 returns_to_go=batch.returns_to_go,
                 timesteps=batch.timesteps,
-                # mask=batch.mask,
-                padding_mask=padding_mask,
+                padding_mask=batch.make_padding_mask(),
             )
 
             loss = handle_loss(model_output, batch)
@@ -129,7 +124,7 @@ def train(
             norm_score = (env.get_normalized_score(eval_ret) * 100).mean().item()
 
         accelerator.print(
-            f"==>Eval: {eval_ret.mean().item():.2f} len: {eval_len.float().mean().item():.2f} norm-score {norm_score:.2f}"
+            f"\n==>Epoch{epoch} loss: {epoch_loss:.4f} | Eval: {eval_ret.mean().item():.2f} len: {eval_len.float().mean().item():.2f} norm-score {norm_score:.2f}"
         )
         epoch_pbar.set_description(
             f"Epoch{epoch} loss: {epoch_loss:.4f} eval: {eval_ret.mean().item():.2f} | norm_score {norm_score:.2f}"

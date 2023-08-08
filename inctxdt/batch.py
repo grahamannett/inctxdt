@@ -37,7 +37,10 @@ class FieldList(list):
 
 
 class EpisodeList(list):
-    """EpisodeList is a list of episodes before they are stacked.  The point of this class is basically to make it marginally easier/more user friendly when doing something with a list of episodes"""
+    """EpisodeList is a list of episodes before they are stacked.
+
+    The point of this class is basically to make it marginally easier/more user friendly when doing
+    something with a list of episodes"""
 
     def __init__(self, eps: List[EpisodeData], batch_first: bool = True):
         super().__init__(eps)
@@ -66,7 +69,7 @@ class Batch:
     id: Optional[torch.Tensor] = None
     env_name: Optional[List[str]] = None
 
-    def make_padding_mask(self):
+    def make_padding_mask(self) -> torch.Tensor:
         return ~self.mask.to(torch.bool)
 
 

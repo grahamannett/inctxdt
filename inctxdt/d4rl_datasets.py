@@ -10,6 +10,7 @@ from tqdm import trange
 
 from inctxdt.config import _envs_registered
 from inctxdt.episode_data import EpisodeData
+from inctxdt.batch import Batch, EpisodeList
 
 
 def wrap_env(
@@ -80,6 +81,8 @@ def load_d4rl_trajectories(
 
 
 class BaseD4RLDataset(Dataset):
+    _d4rl_dataset = True
+
     def __init__(self, dataset_name: str, seq_len: int = 20, reward_scale: float = 1.0):
         self.dataset_name = dataset_name
         self.dataset, info = load_d4rl_trajectories(dataset_name, gamma=1.0)
@@ -129,6 +132,27 @@ class BaseD4RLDataset(Dataset):
         """
         return gym.make(self.dataset_name)
 
+    @staticmethod
+    def make_batch_return_fn(batch_first: bool = True):
+        def fn(episode_list: List[EpisodeData]) -> Batch:
+            eps = EpisodeList(episode_list, batch_first=batch_first)
+            batch = Batch(
+                states=eps.states.pad_tensor,
+                actions=eps.actions.pad_tensor,
+                total_timesteps=eps.total_timesteps.tensor,
+                rewards=eps.rewards.pad_tensor,
+                returns_to_go=eps.returns_to_go.pad_tensor,
+                timesteps=eps.timesteps.pad_tensor,
+                mask=eps.mask.pad_tensor,
+                id=eps.id,
+                seed=eps.seed,
+                env_name=eps.env_name,
+                batch_size=[len(eps)],
+            )
+            return batch
+
+        return fn
+
 
 class D4rlDataset(BaseD4RLDataset):
     def __init__(self, dataset_name: str, *args, **kwargs):
@@ -153,9 +177,28 @@ class D4rlDataset(BaseD4RLDataset):
             returns_to_go=returns,
             id=idx,
             timesteps=timesteps,
+            # terminations=terminations,
+            # truncations=truncations,
             mask=mask,
             env_name=self.dataset_name,
         )
+
+
+class D4rlAcrossEpisodeDataset(D4rlDataset):
+    def __init__(self, dataset_name: str, max_num_epsisodes: int = 2, *args, **kwargs):
+        super().__init__(dataset_name, *args, **kwargs)
+        self.max_num_episodes = max_num_epsisodes
+
+    def __getitem__(self, idx: int) -> Any:
+        idxs = [idx]
+
+        while len(idxs) < self.max_num_episodes:
+            # print("getting")
+            if (new_idx := random.randint(0, len(self.dataset_indices) - 1)) not in idxs:
+                idxs.append(new_idx)
+
+        eps = [super(D4rlAcrossEpisodeDataset, self).__getitem__(i) for i in idxs]
+        return EpisodeData.combine(eps)
 
 
 class IterableD4rlDataset(BaseD4RLDataset, IterableDataset):

@@ -114,7 +114,19 @@ class DecisionTransformer(nn.Module):
         # )
         # self.embed_output_layers.patch_parent(parent=self)
 
-        self.embed_output_layers = DynamicLayers(env_spec=env_spec, embedding_dim=embedding_dim)
+        # self.embed_output_layers = DynamicLayers(env_spec=env_spec, embedding_dim=embedding_dim)
+        # self.embed_output_layers.patch_parent(parent=self)
+
+        self.embed_output_layers = SequentialAction(
+            embedding_dim=embedding_dim,
+            episode_len=episode_len,
+            seq_len=seq_len,
+            state_dim=state_dim,
+            action_dim=action_dim,
+            stack_idxs=[0, 1],
+            kernel_size=(1, 2),
+        )
+
         self.embed_output_layers.patch_parent(parent=self)
 
         # self.forward_output = OriginalActionHead(action_dim=action_dim, embedding_dim=embedding_dim)

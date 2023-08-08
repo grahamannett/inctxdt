@@ -75,10 +75,8 @@ class MinariDataset(minari.MinariDataset):
         return episode
 
     def _fix_episode(self, episode_data: Dict[str, Any]) -> Dict[str, Any]:
-        if self.seq_len:
-            raise NotImplementedError
-
         n_timesteps = episode_data["total_timesteps"]
+
         assert n_timesteps == len(episode_data["actions"])
         assert n_timesteps == len(episode_data["rewards"])
 
@@ -90,29 +88,24 @@ class MinariDataset(minari.MinariDataset):
         episode_data["returns_to_go"] = discounted_cumsum(episode_data["rewards"], gamma=1.0, dtype=np.float32)
         episode_data["mask"] = np.ones(episode_data["total_timesteps"], dtype=np.float32)
         episode_data["timesteps"] = np.arange(n_timesteps)
-
-        # dont do this as i dont know if the other fields are useful or what they mean
-        # concatenate episode data
-        # episode_data["observations"] = np.concatenate(list(episode_data["observations"].values()), axis=-1, dtype=np.float32)
-
-        # fix dtypes of others
-
         episode_data["states"] = episode_data.pop("observations")
         if isinstance(episode_data["states"], dict):
             episode_data["states"] = episode_data["states"]["observation"]
 
-        episode_data["states"] = episode_data["states"].astype(np.float32)[:n_timesteps]
+        # dont do this as i dont know if the other fields are useful or what they mean
+        # concatenate episode data
 
-        # episode_data["states"] = np.concatenate(
-        #     [v for k, v in episode_data["observations"].items()],
-        #     axis=-1,
-        #     dtype=np.float32,
-        # )[:n_timesteps]
-        # episode_data["observations"] = episode_data["observations"]["observation"][
-        #     :n_timesteps
-        # ].astype(np.float32)
+        # fix dtypes of others
+
+        episode_data["states"] = episode_data["states"].astype(np.float32)[:n_timesteps]
         episode_data["actions"] = episode_data["actions"].astype(np.float32)
         episode_data["rewards"] = episode_data["rewards"].astype(np.float32)
+
+        if self.seq_len:
+            for k, v in episode_data.items():
+                if isinstance(v, np.ndarray):
+                    episode_data[k] = v[: self.seq_len]
+
         return episode_data
 
 

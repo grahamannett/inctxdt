@@ -14,6 +14,7 @@ class ConvActionDimHead(nn.Module):
         action_dim: int,
         stack_idxs: List[int] = [0, 1],
         kernel_size: int = (1, 2),
+        seq_types: int = 3,
     ):
         assert len(stack_idxs) == kernel_size[-1], "we can only stack as many as we can convolve"
 
@@ -21,7 +22,7 @@ class ConvActionDimHead(nn.Module):
         self.embedding_dim = embedding_dim
         self.action_dim = action_dim
         self.stack_idxs = stack_idxs
-        self.seq_types = 3  # i.e. returns, states, actions
+        self.seq_types = seq_types  # i.e. returns, states, actions
 
         self.norm = nn.LayerNorm(embedding_dim)
         self.conv = nn.Conv2d(embedding_dim, action_dim, kernel_size=kernel_size)
@@ -43,7 +44,9 @@ class ConvActionDimHead(nn.Module):
         x_postnorm = self.conv(x_postnorm)
         x_postnorm = x_postnorm.squeeze(-1).permute(0, 2, 1)  # put back to [batch_size, seq_len, act_dim]
 
-        return self.activation(x_postnorm).reshape(batch_size, -1)  # flatten to [batch_size, seq_len * act_dim]
+        return self.activation(x_postnorm)
+
+        # return self.activation(x_postnorm).reshape(batch_size, -1)  # flatten to [batch_size, seq_len * act_dim]
 
 
 class SequentialAction(BaseInputOutput):
@@ -86,7 +89,14 @@ class SequentialAction(BaseInputOutput):
         self.action_pos_emb = nn.Embedding(action_dim, embedding_dim)
 
         # output head
-        self.forward_output = nn.Sequential(nn.Linear(embedding_dim, 1), nn.Tanh())
+        self.action_head = nn.Sequential(nn.Linear(embedding_dim, 1), nn.Tanh())
+        # self.action_head = ConvActionDimHead(
+        #     embedding_dim=embedding_dim,
+        #     action_dim=action_dim,
+        #     stack_idxs=list(range(2, 2 + action_dim)),
+        #     kernel_size=(1, action_dim),
+        #     seq_types=1 + 1 + action_dim,
+        # )
 
     def forward_embed(
         self,
@@ -151,6 +161,10 @@ class SequentialAction(BaseInputOutput):
         return embeds, padding_mask
 
     def forward_output(self, x: torch.Tensor, *args, **kwargs):
+        # return self.action_head(x)
+        return self.forward_output_linear_action_head(x, *args, **kwargs)
+
+    def forward_output_linear_action_head(self, x: torch.Tensor, *args, **kwargs):
         batch_size, seq_len = x.shape[0], x.shape[1] // self.seq_types
 
         # reshape to
