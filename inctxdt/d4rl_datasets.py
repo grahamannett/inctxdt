@@ -11,6 +11,7 @@ from tqdm import trange
 from inctxdt.config import _envs_registered
 from inctxdt.episode_data import EpisodeData
 from inctxdt.batch import Batch, EpisodeList
+from inctxdt.datasets_meta import AcrossEpisodeMeta
 
 
 def wrap_env(
@@ -81,9 +82,9 @@ def load_d4rl_trajectories(
 
 
 class BaseD4RLDataset(Dataset):
-    _d4rl_dataset = True
+    _dataset_type = "d4rl"
 
-    def __init__(self, dataset_name: str, seq_len: int = 20, reward_scale: float = 1.0):
+    def __init__(self, dataset_name: str, seq_len: int = 20, reward_scale: float = 1.0, *args, **kwargs):
         self.dataset_name = dataset_name
         self.dataset, info = load_d4rl_trajectories(dataset_name, gamma=1.0)
         self.info = info
@@ -96,6 +97,10 @@ class BaseD4RLDataset(Dataset):
         self.sample_prob = info["traj_lens"] / info["traj_lens"].sum()
 
         self.register_env()
+
+    @property
+    def env_name(self):
+        return self.dataset_name
 
     def register_env(self):
         env = self.recover_environment()
@@ -133,7 +138,7 @@ class BaseD4RLDataset(Dataset):
         return gym.make(self.dataset_name)
 
     @staticmethod
-    def make_batch_return_fn(batch_first: bool = True):
+    def collate_fn(batch_first: bool = True):
         def fn(episode_list: List[EpisodeData]) -> Batch:
             eps = EpisodeList(episode_list, batch_first=batch_first)
             batch = Batch(
@@ -184,8 +189,8 @@ class D4rlDataset(BaseD4RLDataset):
         )
 
 
-class D4rlAcrossEpisodeDataset(D4rlDataset):
-    def __init__(self, dataset_name: str, max_num_epsisodes: int = 2, *args, **kwargs):
+class D4rlAcrossEpisodeDataset(AcrossEpisodeMeta, D4rlDataset):
+    def __init__(self, dataset_name: str, max_num_epsisodes: int = 3, *args, **kwargs):
         super().__init__(dataset_name, *args, **kwargs)
         self.max_num_episodes = max_num_epsisodes
 

@@ -6,9 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from inctxdt.config import EnvSpec
-from inctxdt.layers.base_layers import OriginalActionHead
-from inctxdt.model_layers import SequentialAction, StackedEnvEmbedding, DynamicLayers
-from inctxdt.model_output import ModelOutput
+from inctxdt.models.layers import DynamicLayers, OriginalActionHead, SequentialAction, StackedEnvEmbedding
+from inctxdt.models.model_output import ModelOutput
 
 
 # Decision Transformer implementation
@@ -40,9 +39,8 @@ class TransformerBlock(nn.Module):
     # [batch_size, seq_len, emb_dim] -> [batch_size, seq_len, emb_dim]
 
     def get_casual_mask(self, x: torch.Tensor) -> torch.Tensor:
-        if x.shape[1] > self.causal_mask.shape[0]:
-            return ~torch.tril(torch.ones(x.shape[1], x.shape[1], dtype=bool)).to(x.device)
-
+        # if x.shape[1] > self.causal_mask.shape[0]:
+        #     return ~torch.tril(torch.ones(x.shape[1], x.shape[1], dtype=bool)).to(x.device)
         return self.causal_mask[: x.shape[1], : x.shape[1]]
 
     def forward(self, x: torch.Tensor, padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -88,10 +86,13 @@ class DecisionTransformer(nn.Module):
         self.emb_drop = nn.Dropout(embedding_dropout)
         self.emb_norm = nn.LayerNorm(embedding_dim)
 
+        state_dim = getattr(env_spec, "state_dim", state_dim)
+        action_dim = getattr(env_spec, "action_dim", action_dim)
+
         self.blocks = nn.ModuleList(
             [
                 TransformerBlock(
-                    seq_len=3 * seq_len,
+                    seq_len=seq_len * seq_len,
                     embedding_dim=embedding_dim,
                     num_heads=num_heads,
                     attention_dropout=attention_dropout,
@@ -101,23 +102,8 @@ class DecisionTransformer(nn.Module):
             ]
         )
 
-        # model_cls = SequentialAction
-        # Model_Class = StackedEnvEmbedding
-        # self.embed_output_layers = Model_Class(
-        #     embedding_dim=embedding_dim,
-        #     episode_len=episode_len,
-        #     seq_len=seq_len,
-        #     state_dim=state_dim,
-        #     action_dim=action_dim,
-        #     stack_idxs=[0, 1],
-        #     kernel_size=(1, 2),
-        # )
-        # self.embed_output_layers.patch_parent(parent=self)
-
-        # self.embed_output_layers = DynamicLayers(env_spec=env_spec, embedding_dim=embedding_dim)
-        # self.embed_output_layers.patch_parent(parent=self)
-
-        self.embed_output_layers = SequentialAction(
+        Model_Class = SequentialAction  #  StackedEnvEmbedding
+        self.embed_output_layers = Model_Class(
             embedding_dim=embedding_dim,
             episode_len=episode_len,
             seq_len=seq_len,
@@ -127,9 +113,8 @@ class DecisionTransformer(nn.Module):
             kernel_size=(1, 2),
         )
 
+        # self.embed_output_layers = DynamicLayers(env_spec=env_spec, embedding_dim=embedding_dim)
         self.embed_output_layers.patch_parent(parent=self)
-
-        # self.forward_output = OriginalActionHead(action_dim=action_dim, embedding_dim=embedding_dim)
 
         self.seq_len = seq_len
         self.embedding_dim = embedding_dim
@@ -158,6 +143,7 @@ class DecisionTransformer(nn.Module):
         timesteps: torch.Tensor,  # [batch_size, seq_len]
         mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
         padding_mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
+        **kwargs,
     ) -> torch.FloatTensor:
         sequence, padding_mask = self.forward_embed(
             states=states,

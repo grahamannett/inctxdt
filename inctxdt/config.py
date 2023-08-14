@@ -1,36 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Tuple
-import torch
-from distutils.util import strtobool
-
-from inctxdt.env_helper import get_env
 
 
-_warned_attrs = set()
-
-_envs_registered = {}
 
 
-def _get_env_spec(env_name: str = None, dataset_name: str = None) -> Tuple[int, int]:
-    # breakpoint()
-    assert env_name or dataset_name, "Must pass in either env_name or dataset_name"
-    if env_name in _envs_registered:
-        return _envs_registered[env_name]["action_space"], _envs_registered[env_name]["state_space"]
-
-    if dataset_name in _envs_registered:
-        return _envs_registered[dataset_name]["action_space"], _envs_registered[dataset_name]["state_space"]
-
-    try:
-        import gym
-
-        env = gym.make(env_name)
-    except Exception as err:
-        print(f"ERROR: Could not load env: {env_name}")
-        raise err
-
-    action_dim = env.action_space.shape[0]
-    state_dim = env.observation_space.shape[0]
-    return action_dim, state_dim
 
 
 @dataclass
@@ -39,27 +12,74 @@ class EnvSpec:
     seq_len: int
     env_name: str
 
-    action_dim: int = None
-    state_dim: int = None
+    state_dim: int  # = None
+    action_dim: int  # = None
 
-    def __post_init__(self):
-        if (self.action_dim is None) or (self.state_dim is None):
-            breakpoint()
-            self.action_dim, self.state_dim = _get_env_spec(self.env_name)
+    @classmethod
+    def from_env(cls, env, episode_len: int, seq_len: int):
+        return cls(
+            episode_len=episode_len,
+            seq_len=seq_len,
+            env_name=env.env_name,
+            action_dim=env.action_dim,
+            state_dim=env.state_dim,
+        )
 
 
 @dataclass
-class config_tool:
-    dataset_name: str = "pointmaze-umaze-v1"
+class CentroidConfig:
+    n_clusters: int = 100
+    mode: str = "cosine"
+
+    # number of batches to train from centroids
+    n_batches: int = 10
+
+
+@dataclass
+class EvalConfig:
+    model_dir: str = None
+
+
+@dataclass
+class LogConfig:
+    # init params
+    name: str = None
+    project: str = "inctxdt"
+    group: str = "train"
+    mode: str = "disabled"
+    tags: list[str] = field(default_factory=list)  #
+
+    # logging related
+    log_every: int = 100
+
+
+@dataclass
+class Config:
+    # --- SUB CONFIG TYPES
+    # LogConfig = LogConfig
+
+    # --- SUB CONFIG TYPES
+
+    # dataset_name: str = "pointmaze-umaze-v1"
+    # dataset_type: str = "minari"
+    dataset_name: str = "halfcheetah-medium-v2"
+    dataset_type: str = "d4rl"
+
     device: str = "cpu"
+    cmd: str = "train"
+
+    exp_root: str = "output"
+    exp_name: str = "latest"
+    save_model: bool = True
 
     epochs: int = 1
     num_workers: int = 8
     batch_size: int = 32
+    shuffle: bool = True
     n_batches: int = -1
 
     # dataset
-    seq_len: int = 20
+    seq_len: int = 30
     episode_len: int = 1000
 
     num_layers: int = 6
@@ -67,6 +87,9 @@ class config_tool:
 
     adist: bool = False  # accelerate distributed
     dist: bool = False  # pytorch distributed
+
+    log: LogConfig = field(default_factory=LogConfig)
+    centroids: CentroidConfig = field(default_factory=CentroidConfig)
 
     # optim
     betas: Tuple[float, float] = (0.9, 0.999)
@@ -78,106 +101,43 @@ class config_tool:
 
     # eval
     reward_scale: float = 0.001
+    target_return: float = 12000.0
     eval_episodes: int = 5
 
-    _debug: bool = False
     debug_note: str = ""
-    __singleton = None
+    seed: int = 42
+
+    # _debug: bool = False
+    # __singleton = None
 
     def __post_init__(self):
-        pass
+        self._check_dataset()
 
-    def __init__(self, *args, **kwargs):
-        pass
+    def _check_dataset(self):
+        dataset_type = self.dataset_type.split("_")[0]
+        assert dataset_type in ["minari", "d4rl"], f"dataset_type: {dataset_type} not supported"
 
-    def __getattr__(self, attr):
-        if attr in self.__dict__:
-            return self.__dict__[attr]
+    def _get_dataset_type(self):
+        import minari
 
-        if (attr not in _warned_attrs) and self._debug:
-            print(f" WARNING: Used non-existent config field:`{str(attr)}`. Returning None.")
-            _warned_attrs.add(attr)
+        if self.dataset_name in minari.list_remote_datasets():
+            return "minari"
 
-        return None
+        return "d4rl"
 
-    @staticmethod
-    def _get_env_spec(env_name: str, episode_len: int, seq_len: int):
-        return EnvSpec(
-            episode_len=episode_len,
-            seq_len=seq_len,
-            env_name=env_name,
-        )
-
-    def get_env_spec(self, dataset_name: str = None):
-        dataset_name = dataset_name or self.dataset_name
-        return self._get_env_spec(dataset_name, self.episode_len, self.seq_len)
-
-    @classmethod
-    def get(cls, **kwargs):
-        """
-        helper class to make singleton config object
-        """
-        # allow passed in kwargs to override
-        for k, v in kwargs.items():
-            setattr(cls, k, v)
-
-        import argparse
-
-        parser = argparse.ArgumentParser()
-        for k, v in cls.__dict__.items():
-            if k.startswith("_"):
-                continue
-            parser.add_argument(f"--{k}", type=type(v), default=v)
-        args, extra = parser.parse_known_args()
-
-        if extra:
-            for e in extra:
-                if e.startswith("--") and "=" in e:
-                    field, val = e.split("=")
-                    field = field[2:]
-                    if val.isdigit():
-                        val = float(val)
-                    elif val.lower() in (
-                        "true",
-                        "false",
-                    ):
-                        val = bool(strtobool(val))
-
-                    parser.add_argument(f"--{field}", default=val, type=type(val))
-            args, extra = parser.parse_known_args()
-
-        for k, v in vars(args).items():
-            setattr(cls, k, v)
-
-        cls.device = "cuda" if torch.cuda.is_available() else "cpu"
-        if cls.device == "cpu":
-            print("WARNING RUNNING IN CPU MODE.  ONLY FOR DEV.")
-
-        if cls.__singleton is None:  # might want this before arg related
-            cls.__singleton = cls()
-
-        _debug_note(cls.debug_note.upper())
-
-        return cls.__singleton
+    @property
+    def exp_dir(self) -> str:
+        # Properties are great for arguments that can be derived from existing ones
+        return f"{self.exp_root}/{self.exp_name}"
 
 
-def _debug_note(note: str = None):
-    if note in ["", None]:
-        return
+# def _debug_note(note: str = None):
+#     if note in ["", None]:
+#         return
 
-    import atexit
-
-    def _print_info():
-        print("===" * 30)
-        print("\t--RUN/DEBUG-NOTE:")
-        print("\n\n==>🤠|>", note.upper(), "<|🤠<==\n\n")
-        print("===" * 30)
-
-    atexit.register(_print_info)
-    _print_info()
-
-
-if __name__ == "__main__":
-    conf = config_tool.get()
-    val = conf.asdfl
-    breakpoint()
+#     import atexit
+# def _print_info():
+#     print("===" * 30)
+#     print("\t--RUN/DEBUG-NOTE:")
+#     print("\n\n==>🤠|>", note.upper(), "<|🤠<==\n\n")
+#     print("===" * 30)

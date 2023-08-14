@@ -1,18 +1,16 @@
 from typing import Any, Dict, Tuple
 
+import gymnasium
 import numpy as np
 import torch
+from gym.vector import VectorEnv
 
-# from gym import Env
-# from gymnasium import Env
-# from gym import Env
-# from gym import vector
-import gym
+from tqdm.auto import trange
 
-from inctxdt.config import EnvSpec, config_tool
-
-from inctxdt.model import DecisionTransformer
-from inctxdt.model_output import ModelOutput
+from inctxdt.config import EnvSpec
+from inctxdt.episode_data import EpisodeData
+from inctxdt.models.model import DecisionTransformer
+from inctxdt.models.model_output import ModelOutput
 
 
 def fix_obs_dict(obs: Dict[str, np.array] | np.array) -> np.array:
@@ -26,7 +24,7 @@ def fix_obs_dict(obs: Dict[str, np.array] | np.array) -> np.array:
 @torch.no_grad()
 def eval_rollout(
     model: DecisionTransformer,
-    env: gym.Env,
+    env: gymnasium.Env,
     env_spec: EnvSpec,
     device: str,
     target_return: float,
@@ -95,15 +93,22 @@ def _check_states(states: Any) -> TypeError:
 @torch.no_grad()
 def venv_eval_rollout(
     model: DecisionTransformer,
-    venv: gym.vector.VectorEnv,
+    venv: gymnasium.vector.VectorEnv,
     env_spec: EnvSpec,
     device: str,
     target_return: float,
+    output_sequential: bool = False,
+    prior_episode: EpisodeData = None,
 ) -> Tuple[float, float]:
+    assert isinstance(venv, (gymnasium.vector.VectorEnv, VectorEnv)), "venv must be a vectorized env."
+
     num_envs = venv.num_envs
-    episode_len = env_spec.episode_len
+    max_episode_len = episode_len = env_spec.episode_len
     seq_len = env_spec.seq_len
     model.eval()
+
+    if prior_episode is not None:
+        episode_len += len(prior_episode)
 
     states = torch.zeros(num_envs, episode_len + 1, env_spec.state_dim, dtype=torch.float, device=device)
     actions = torch.zeros(num_envs, episode_len, env_spec.action_dim, dtype=torch.float, device=device)
@@ -112,13 +117,23 @@ def venv_eval_rollout(
     timesteps = timesteps.repeat(num_envs, 1).view(num_envs, -1)
 
     states_init = venv.reset()
+
     if len(states_init) == 2:
         states_init = states_init[0]
 
     # _check_states(states_init)  # # states_init = fix_obs_dict(states_init)
 
-    states[:, 0] = torch.as_tensor(states_init, device=device)
-    returns[:, 0] = torch.as_tensor(target_return, device=device)
+    init_idx = 0
+    if prior_episode:
+        states[:, : len(prior_episode)] = torch.as_tensor(prior_episode.states, device=device)
+        actions[:, : len(prior_episode)] = torch.as_tensor(prior_episode.actions, device=device)
+        returns[:, : len(prior_episode)] = torch.as_tensor(prior_episode.returns_to_go, device=device)
+        prior_ts = torch.as_tensor(prior_episode.timesteps, device=device).unsqueeze(0).repeat(venv.num_envs, 1)
+        timesteps = torch.cat([prior_ts, timesteps], dim=-1)
+        init_idx = len(prior_episode)
+
+    states[:, init_idx] = torch.as_tensor(states_init, device=device)
+    returns[:, init_idx] = torch.as_tensor(target_return, device=device)
 
     # cannot step higher than model episode len, as timestep embeddings will crash
     terminated, truncated = False, False
@@ -128,7 +143,8 @@ def venv_eval_rollout(
     venv_episode_len = torch.zeros(num_envs, dtype=torch.int)
     dones = torch.zeros(num_envs, dtype=torch.bool)
 
-    for step in range(episode_len):
+    for step in trange(max_episode_len, desc="Eval Rollout"):
+        step += init_idx
         # first select history up to step, then select last seq_len states,
         # step + 1 as : operator is not inclusive, last action is dummy with zeros
         # (as model will predict last, actual last values are not important)
@@ -139,11 +155,23 @@ def venv_eval_rollout(
             returns[~dones, : step + 1][:, -seq_len:],  # noqa
             timesteps[~dones, : step + 1][:, -seq_len:],  # noqa
         )
+        logits = output.logits
 
-        # predicted_action = output.logits.squeeze()
-        # predicted_action = predicted_action[~dones, -env_spec.action_dim :].cpu().numpy()
-        # predicted_action = output.logits[~dones, -env_spec.action_dim :].squeeze().cpu().numpy()
-        predicted_action = output.logits.reshape(venv.num_envs, -1)
+        if output_sequential:
+            actions_ = [output.logits]
+
+            for i in range(1, env_spec.action_dim):
+                output = model(
+                    states[~dones, : step + 1][:, -seq_len:],  # noqa
+                    actions[~dones, : step + 1][:, -seq_len:],  # noqa
+                    returns[~dones, : step + 1][:, -seq_len:],  # noqa
+                    timesteps[~dones, : step + 1][:, -seq_len:],  # noqa
+                )
+                actions_.append(output.logits)
+
+            logits = torch.stack(actions_, dim=-1)
+
+        predicted_action = logits.reshape(venv.num_envs, -1)
         predicted_action = predicted_action[~dones, -env_spec.action_dim :].squeeze().cpu().numpy()
 
         # unpack
@@ -182,7 +210,7 @@ if __name__ == "__main__":
 
     model = DecisionTransformer(17, 6, 20)
     env_spec = EnvSpec(episode_len=1000, seq_len=20, action_dim=6, state_dim=17)
-    env = gym.vector.make("halfcheetah-medium-v2", num_envs=10, asynchronous=False)
+    env = gymnasium.vector.make("halfcheetah-medium-v2", num_envs=10, asynchronous=False)
 
     vals = venv_eval_rollout(model, env, env_spec, "cpu", 12000.0)
     print(vals)

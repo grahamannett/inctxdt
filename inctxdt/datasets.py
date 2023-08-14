@@ -7,6 +7,7 @@ from minari.storage.datasets_root_dir import get_dataset_path
 from torch.utils.data import Dataset
 
 from inctxdt.episode_data import EpisodeData
+from inctxdt.datasets_meta import AcrossEpisodeMeta, MultipleEpisodeMeta
 
 from inctxdt.config import _envs_registered
 
@@ -28,16 +29,23 @@ def _get_data_path_from_dataset_name(dataset_name: str) -> str:
 
 
 class MinariDataset(minari.MinariDataset):
-    def __init__(self, dataset_name: str, seq_len: int = None):
+    _dataset_type = "minari"
+
+    def __init__(self, dataset_name: str, seq_len: int = None, reward_scale: float = 1.0, *args, **kwargs):
         data_path = _get_data_path_from_dataset_name(dataset_name)
         super().__init__(data=data_path)
 
         self.dataset_name = dataset_name
-        self.env_name = self._data.env_spec.id
+        self._env_name = self._data.env_spec.id
 
         self.seq_len = seq_len
+        self.reward_scale = reward_scale
 
         self.setup()
+
+    @property
+    def env_name(self):
+        return self._env_name
 
     def register_env(self):
         _env = self.recover_environment()
@@ -85,18 +93,18 @@ class MinariDataset(minari.MinariDataset):
         if episode_data["seed"] == "None":
             episode_data["seed"] = None
 
-        episode_data["returns_to_go"] = discounted_cumsum(episode_data["rewards"], gamma=1.0, dtype=np.float32)
+        episode_data["returns_to_go"] = (
+            discounted_cumsum(episode_data["rewards"], gamma=1.0, dtype=np.float32) * self.reward_scale
+        )
+
         episode_data["mask"] = np.ones(episode_data["total_timesteps"], dtype=np.float32)
         episode_data["timesteps"] = np.arange(n_timesteps)
         episode_data["states"] = episode_data.pop("observations")
+
         if isinstance(episode_data["states"], dict):
             episode_data["states"] = episode_data["states"]["observation"]
 
-        # dont do this as i dont know if the other fields are useful or what they mean
-        # concatenate episode data
-
-        # fix dtypes of others
-
+        # fix dtypes
         episode_data["states"] = episode_data["states"].astype(np.float32)[:n_timesteps]
         episode_data["actions"] = episode_data["actions"].astype(np.float32)
         episode_data["rewards"] = episode_data["rewards"].astype(np.float32)
@@ -109,13 +117,15 @@ class MinariDataset(minari.MinariDataset):
         return episode_data
 
 
-class AcrossEpisodeDataset(MinariDataset):
+class AcrossEpisodeDataset(AcrossEpisodeMeta, MinariDataset):
     def __init__(
         self,
         dataset_name: str,
         seq_len: int = None,
         max_num_epsisodes: int = 2,
         drop_last: bool = False,
+        *args,
+        **kwargs,
     ):
         super().__init__(dataset_name, seq_len)
         self.max_num_episodes = max_num_epsisodes
@@ -132,10 +142,10 @@ class AcrossEpisodeDataset(MinariDataset):
         return EpisodeData.combine(eps)
 
 
-class MultipleMinariDataset(Dataset):
+class MultipleMinariDataset(MultipleEpisodeMeta, Dataset):
     """requires that the datasets share properties"""
 
-    def __init__(self, datasets: List[MinariDataset]):
+    def __init__(self, datasets: List[MinariDataset], *args, **kwargs):
         self.datasets = datasets
         self.dataset_indices = []
         self._generate_indexes()

@@ -11,8 +11,8 @@ class FlattenEnv(gymnasium.ObservationWrapper):
         return obs["observation"]
 
 
-def get_env_gymnasium(dataset, config, make_venv: bool = True):
-    base_env = gymnasium.make(dataset.env_name)
+def get_env_gymnasium(env_name: str, config=None, venv: bool = True):
+    base_env = gymnasium.make(env_name)
     base_obs = base_env.reset()[0]
 
     observation_shape = base_env.observation_space
@@ -24,7 +24,7 @@ def get_env_gymnasium(dataset, config, make_venv: bool = True):
         observation_shape = observation_shape["observation"]
 
     def fn():
-        env = gymnasium.make(dataset.env_name)
+        env = gymnasium.make(env_name)
         env = FlattenEnv(env, base_obs.shape) if needs_flatten else env
         env = gymnasium.wrappers.NormalizeObservation(env)
         env = gymnasium.wrappers.TransformReward(env, lambda rew: rew * config.reward_scale)
@@ -33,27 +33,24 @@ def get_env_gymnasium(dataset, config, make_venv: bool = True):
     base_env = fn()
     obs_space = base_env.observation_space
 
-    out = (
-        fn,
-        base_env,
+    venv = (
+        gymnasium.vector.SyncVectorEnv([fn for _ in range(config.eval_episodes)], observation_space=obs_space)
+        if venv
+        else None
     )
 
-    if make_venv:
-        venv = gymnasium.vector.SyncVectorEnv([fn for _ in range(config.eval_episodes)], observation_space=obs_space)
-        out += (venv,)
-
-    return out + (observation_shape, base_env.action_space)
+    return fn, base_env, venv, obs_space, base_env.action_space
 
 
-def get_env_gym(dataset, config, make_venv: bool = True):
+def get_env_gym(env_name: str, config=None, venv: bool = True):
     import gym
     import d4rl
 
-    base_env = gym.make(dataset.dataset_name)
+    base_env = gym.make(env_name)
     # base_obs = base_env.reset()[0]
 
     def fn():
-        env = gym.make(dataset.dataset_name)
+        env = gym.make(env_name)
         env = gym.wrappers.NormalizeObservation(env)
         env = gym.wrappers.TransformReward(env, lambda rew: rew * config.reward_scale)
         return env
@@ -61,27 +58,43 @@ def get_env_gym(dataset, config, make_venv: bool = True):
     base_env = fn()
     obs_space = base_env.observation_space
 
-    out = (fn, base_env)
+    venv = (
+        gym.vector.SyncVectorEnv([fn for _ in range(config.eval_episodes)], observation_space=obs_space)
+        if venv
+        else None
+    )
 
-    if make_venv:
-        venv = gym.vector.SyncVectorEnv([fn for _ in range(config.eval_episodes)], observation_space=obs_space)
-        out += (venv,)
-
-    return out + (obs_space, base_env.action_space)
-
-
-def get_env(dataset, config):
-    if getattr(dataset, "_d4rl_dataset", False):
-        return get_env_gym(dataset, config)
-    return get_env_gymnasium(dataset, config)
+    return fn, base_env, venv, obs_space, base_env.action_space
 
 
-if __name__ == "__main__":
-    pass
-    # class Dataset:
-    #     state_mean = np.array([1, 2, 3])
-    #     state_std = np.array([1, 2, 3])
+_fn = {
+    "d4rl": get_env_gym,
+    "minari": get_env_gymnasium,
+}
 
-    # dataset = Dataset()
 
-    # env, venv = get_env(dataset, config)
+def get_env(config, dataset=None, env_name=None, dataset_type=None):
+    env_name = env_name or getattr(dataset, "env_name", config.dataset_name)
+
+    dataset_type = dataset_type or getattr(dataset, "_dataset_type", config.dataset_type)
+
+    dataset_type = dataset_type.split("_")[0]  # might have _across or _multiple
+
+    env_fn = _fn[dataset_type]
+    return env_fn(env_name, config)
+
+
+#  probably need to remove
+_envs_registered = {}
+
+
+def _get_env_spec(env_name: str = None, dataset_name: str = None) -> Tuple[int, int]:
+    # breakpoint()
+    assert env_name or dataset_name, "Must pass in either env_name or dataset_name"
+    if env_name in _envs_registered:
+        return _envs_registered[env_name]["action_space"], _envs_registered[env_name]["state_space"]
+
+    if dataset_name in _envs_registered:
+        return _envs_registered[dataset_name]["action_space"], _envs_registered[dataset_name]["state_space"]
+
+    assert False, f"env_name: {env_name} or dataset_name: {dataset_name} not found in registered envs"

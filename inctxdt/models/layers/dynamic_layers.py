@@ -3,7 +3,7 @@ import torch.nn as nn
 from fast_pytorch_kmeans import KMeans
 
 from inctxdt.config import EnvSpec
-from inctxdt.layers.base_layers import OriginalEnvEmbedding, OriginalActionHead, BaseInputOutput
+from inctxdt.models.layers.base_layers import OriginalEnvEmbedding, OriginalActionHead, BaseInputOutput
 
 
 class DynamicEmbedding(nn.Module):

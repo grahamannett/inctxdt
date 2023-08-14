@@ -1,14 +1,13 @@
-from typing import List, Tuple
 import torch
 import torch.nn as nn
-
-from inctxdt.config import EnvSpec
 
 
 class BaseInputOutput(nn.Module):
     def patch_parent(self, parent):
         parent.forward_embed = self.forward_embed
         parent.forward_output = self.forward_output
+
+        return self
 
     def forward(self, *args, **kwargs):
         if "states" in kwargs:

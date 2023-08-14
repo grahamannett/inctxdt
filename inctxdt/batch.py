@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from typing import Callable, Dict, List, Optional
 
 import torch
@@ -71,6 +72,9 @@ class Batch:
 
     def make_padding_mask(self) -> torch.Tensor:
         return ~self.mask.to(torch.bool)
+
+    def asdict(self):
+        return asdict(self)
 
 
 class Collate:

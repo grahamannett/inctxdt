@@ -1,6 +1,6 @@
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from dataclasses import dataclass, fields, field
+from dataclasses import asdict, dataclass, fields, field
 import numpy as np
 
 
@@ -44,9 +44,7 @@ class EpisodeData:
             self.total_timesteps = len(self.states)
 
         if self.timesteps is None:
-            self.timesteps = np.arange(
-                max(self.total_timesteps, len(self.states))
-            )
+            self.timesteps = np.arange(max(self.total_timesteps, len(self.states)))
 
     def __repr__(self) -> str:
         return (
@@ -64,14 +62,15 @@ class EpisodeData:
             ")"
         )
 
+    def __len__(self) -> int:
+        return len(self.states)
+
     @staticmethod
     def _repr_space_values(value):
         if isinstance(value, np.ndarray):
             return f"ndarray of shape {value.shape} and dtype {value.dtype}"
         elif isinstance(value, dict):
-            reprs = [
-                f"{k}: {EpisodeData._repr_space_values(v)}" for k, v in value.items()
-            ]
+            reprs = [f"{k}: {EpisodeData._repr_space_values(v)}" for k, v in value.items()]
             dict_repr = ", ".join(reprs)
             return "{" + dict_repr + "}"
         elif isinstance(value, tuple):
@@ -83,12 +82,12 @@ class EpisodeData:
 
     @classmethod
     def combine(
-        cls, episodes: List["EpisodeData"], skip_fields: List[str] = ["env_name"]
+        cls,
+        episodes: List["EpisodeData"],
+        skip_fields: List[str] = ["env_name"],
     ) -> "EpisodeData":
         if len(env_names := set([ep.env_name for ep in episodes])) > 1:
-            raise ValueError(
-                f"Cannot combine episodes from different environments: {env_names}"
-            )
+            raise ValueError(f"Cannot combine episodes from different environments: {env_names}")
 
         out_ep = {"env_name": env_names.pop()}
 
@@ -103,6 +102,22 @@ class EpisodeData:
             out_ep[field.name] = comb_field
 
         return cls(**out_ep)
+
+    def asdict(self):
+        return asdict(self)
+
+    # @classmethod
+    # def add_field(cls, field: str, field_type: Any, default: Any = None):
+    #     if field in cls.__annotations__:
+    #         raise ValueError(f"Field {field} already exists in EpisodeData.")
+
+    #     cls.__annotations__[field] = field_type
+
+    #     if default is not None:
+    #         setattr(cls, field, field(default=default))
+
+    # def combine(self, episodes: list["EpisodeData"], **kwargs):
+    #     return EpisodeData.combine([self, *episodes], **kwargs)
 
 
 def make(frozen: bool = EpisodeDataConfig.frozen):

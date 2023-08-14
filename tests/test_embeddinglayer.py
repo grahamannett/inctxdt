@@ -4,7 +4,7 @@ import unittest
 import torch
 from inctxdt.batch import Batch, Collate
 
-from inctxdt.config import EnvSpec, config_tool
+from inctxdt.config import EnvSpec, Config
 from inctxdt.d4rl_datasets import D4rlDataset
 from inctxdt.layers.dynamic_layers import DynamicEmbedding, DynamicLayers
 
@@ -20,8 +20,8 @@ class TestEmbeddingLayer(unittest.TestCase):
         alt_env = "hopper-medium-v0"
         batch_size = 32
         episode_len, seq_len = 1000, 20
-        env_spec = config_tool._get_env_spec(env_name=base_env, episode_len=1000, seq_len=20)
-        env_spec2 = config_tool._get_env_spec(env_name=alt_env, episode_len=1000, seq_len=20)
+        env_spec = Config._get_env_spec(env_name=base_env, episode_len=1000, seq_len=20)
+        env_spec2 = Config._get_env_spec(env_name=alt_env, episode_len=1000, seq_len=20)
 
         embedding_layer = DynamicEmbedding(env_spec=env_spec)
         embedding_layer.cuda()
@@ -65,7 +65,7 @@ class TestEmbeddingLayer(unittest.TestCase):
         batch_size = 32
 
         base_env = "halfcheetah-medium-v2"
-        env_spec = config_tool._get_env_spec(env_name=base_env, episode_len=episode_len, seq_len=seq_len)
+        env_spec = Config._get_env_spec(env_name=base_env, episode_len=episode_len, seq_len=seq_len)
 
         def _make_batch_for_env(env_name, state_dim, action_dim):
             batch = Batch(
@@ -97,7 +97,7 @@ class TestEmbeddingLayer(unittest.TestCase):
 
         cluster_info = embedding_layer.make_env_clusters()
 
-        alt_env_spec = config_tool._get_env_spec(env_name="hopper-medium-v0", episode_len=episode_len, seq_len=seq_len)
+        alt_env_spec = Config._get_env_spec(env_name="hopper-medium-v0", episode_len=episode_len, seq_len=seq_len)
         batch2 = _make_batch_for_env(alt_env_spec.env_name, alt_env_spec.state_dim, alt_env_spec.action_dim)
 
         embedding_out, pad_mask_out = embedding_layer(
