@@ -8,3 +8,4 @@ output/
 compare/
 conf/
 experiments/
+wandb/
