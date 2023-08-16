@@ -2,7 +2,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from inctxdt.model_output import ModelOutput
+from inctxdt.models.model_output import ModelOutput
 
 
 # Decision Transformer implementation
@@ -124,7 +124,6 @@ class DecisionTransformer(nn.Module):
         padding_mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
         **kwargs,
     ) -> torch.FloatTensor:
-
         batch_size, seq_len = states.shape[0], states.shape[1]
         # [batch_size, seq_len, emb_dim]
 
@@ -160,10 +159,8 @@ class DecisionTransformer(nn.Module):
         # predict actions only from state embeddings
         out = self.action_head(out[:, 1::3]) * self.max_action
         # return out
-        if self.only_logits:
-            return out
 
-        return ModelOutput(logits=out)
+        return ModelOutput(logits=out, only_logits=self.only_logits)
         # return out
 
 

@@ -65,7 +65,7 @@ model = DecisionTransformer(
     seq_len=config.seq_len,
     env_spec=env_spec,
 )
-model.load_state_dict(torch.load(f"{config.exp_dir}/model_24/pytorch_model.bin"))
+model.load_state_dict(torch.load(f"{config.exp_dir}/model_3/pytorch_model.bin"))
 
 model.to(accelerator.device)
 
@@ -88,7 +88,7 @@ dataloader = torch.utils.data.DataLoader(
     ),
 )
 
-model = train_embeds(config, model, layers_to_train, dataloader=dataloader, accelerator=accelerator)
+# model = train_embeds(config, model, layers_to_train, dataloader=dataloader, accelerator=accelerator)
 # breakpoint()
 eval_ret, _ = venv_eval_rollout(
     model,

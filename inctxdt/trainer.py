@@ -219,7 +219,7 @@ def train(
                 pbar.set_description(f"loss={loss.item():.4f}")
 
             if (batch_idx % config.log.log_every) == 0:
-                _log(loss=loss.item(), epoch=epoch)
+                _log(loss=loss.item())
 
         eval_ret, _ = venv_eval_rollout(
             model,
@@ -230,13 +230,11 @@ def train(
         )
 
         eval_ret /= config.reward_scale
-
+        eval_ret_mean = eval_ret.mean().item()
         norm_score = _norm_score(eval_ret)
 
-        _log(epoch=epoch, returns=eval_ret.mean().item(), norm_score=norm_score if norm_score > 0 else None)
+        _log(epoch=epoch, returns=eval_ret_mean, norm_score=norm_score if norm_score != 0 else None)
 
-        accelerator.print(
-            f"[E:{epoch}][L:{epoch_loss:.4f}]|->eval:{eval_ret.mean().item():.2f}|->norm:{norm_score:.2f}"
-        )
+        accelerator.print(f"[E:{epoch}][L:{epoch_loss:.4f}]|->eval:{eval_ret_mean:.2f}|->norm:{norm_score:.2f}")
 
         _save_model(epoch)

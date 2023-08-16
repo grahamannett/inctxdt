@@ -83,7 +83,7 @@ class SequentialAction(BaseInputOutput):
         self.embedding_dim = embedding_dim
 
         # self.timestep_emb = nn.Embedding(episode_len + seq_len, embedding_dim)
-        self.timestep_emb = nn.Embedding(episode_len**2, embedding_dim)
+        self.timestep_emb = nn.Embedding(episode_len, embedding_dim)
         self.state_emb = nn.Linear(state_dim, embedding_dim)
         self.return_emb = nn.Linear(1, embedding_dim)
 
@@ -142,8 +142,8 @@ class SequentialAction(BaseInputOutput):
         act_emb += repeat_time_emb
 
         act_emb = act_emb.reshape(batch_size, seq_len, action_dim, self.embedding_dim)
-        # seq will be [batch_size, seq_len, (ret) 1 + (state) 1, embedding_dim]
 
+        # seq will be [batch_size, seq_len, (ret) 1 + (state) 1, embedding_dim]
         embeds = torch.stack([ret_emb, state_emb], dim=2)
 
         # [batch_size, seq_len, (ret) 1 + (state) 1 + (act) action_dim, embedding_dim]

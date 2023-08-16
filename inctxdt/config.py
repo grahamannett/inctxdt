@@ -1,9 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
-
-
-
+from pyrallis import dump
 
 
 @dataclass
@@ -38,6 +36,11 @@ class CentroidConfig:
 @dataclass
 class EvalConfig:
     model_dir: str = None
+    reward_scale: float = None
+
+    def __post_init__(self):
+        if self.reward_scale is None:
+            self.reward_scale = Config.reward_scale
 
 
 @dataclass
@@ -80,10 +83,11 @@ class Config:
 
     # dataset
     seq_len: int = 30
-    episode_len: int = 1000
+    episode_len: int = 2048
 
-    num_layers: int = 6
-    num_heads: int = 8
+    num_layers: int = 4
+    num_heads: int = 4
+    embedding_dim: int = 256
 
     adist: bool = False  # accelerate distributed
     dist: bool = False  # pytorch distributed
@@ -104,7 +108,7 @@ class Config:
     target_return: float = 12000.0
     eval_episodes: int = 5
 
-    debug_note: str = ""
+    debug: str = None
     seed: int = 42
 
     # _debug: bool = False
@@ -129,6 +133,23 @@ class Config:
     def exp_dir(self) -> str:
         # Properties are great for arguments that can be derived from existing ones
         return f"{self.exp_root}/{self.exp_name}"
+
+    @property
+    def console_info(self) -> str:
+        return dump(self)
+
+    @classmethod
+    def use_accelerate(cls, accelerator) -> None:
+        cls._accelerator = accelerator
+
+    def __repr__(self):
+        output_str = ""
+        if self.debug:
+            output_str += f"\n\n==>🤠|> {self.debug.upper()} <|🤠<==\n\n"
+
+        output_str += f"=== Config ===\n"
+        output_str += self.console_info
+        return output_str
 
 
 # def _debug_note(note: str = None):

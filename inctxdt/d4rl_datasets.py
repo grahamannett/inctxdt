@@ -8,10 +8,10 @@ import numpy as np
 from torch.utils.data import Dataset, IterableDataset
 from tqdm import trange
 
-from inctxdt.config import _envs_registered
+from inctxdt.env_helper import _envs_registered
 from inctxdt.episode_data import EpisodeData
 from inctxdt.batch import Batch, EpisodeList
-from inctxdt.datasets_meta import AcrossEpisodeMeta
+from inctxdt.datasets_meta import AcrossEpisodeMeta, MultipleEpisodeMeta
 
 
 def wrap_env(
@@ -190,7 +190,7 @@ class D4rlDataset(BaseD4RLDataset):
 
 
 class D4rlAcrossEpisodeDataset(AcrossEpisodeMeta, D4rlDataset):
-    def __init__(self, dataset_name: str, max_num_epsisodes: int = 3, *args, **kwargs):
+    def __init__(self, dataset_name: str, max_num_epsisodes: int = 2, *args, **kwargs):
         super().__init__(dataset_name, *args, **kwargs)
         self.max_num_episodes = max_num_epsisodes
 
@@ -204,6 +204,35 @@ class D4rlAcrossEpisodeDataset(AcrossEpisodeMeta, D4rlDataset):
 
         eps = [super(D4rlAcrossEpisodeDataset, self).__getitem__(i) for i in idxs]
         return EpisodeData.combine(eps)
+
+
+class D4rlMultipleDataset(MultipleEpisodeMeta, D4rlDataset):
+    def __init__(self, datasets: list[D4rlDataset], *args, **kwargs):
+        self.datasets = datasets
+        self.dataset_indices = []
+        self._generate_indexes()
+
+    def __len__(self):
+        return len(self.dataset_indices)
+
+    def __getitem__(self, index) -> Any:
+        ds_idx, ep_idx = self.dataset_indices[index]
+        return self.datasets[ds_idx][ep_idx]
+
+    def _generate_indexes(self):
+        for i, ds in enumerate(self.datasets):
+            self.dataset_indices.extend([(i, j) for j in range(len(ds))])
+
+    def _validate_datasets(self):
+        samples = [ds[0] for ds in self.datasets]
+        for i, sample in enumerate(samples):
+            pass
+
+    def __getattr__(self, attr):
+        if attr in self.__dict__:
+            return self.__dict__[attr]
+        else:
+            return getattr(self.datasets[0], attr)
 
 
 class IterableD4rlDataset(BaseD4RLDataset, IterableDataset):

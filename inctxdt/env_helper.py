@@ -88,7 +88,7 @@ def get_env(config, dataset=None, env_name=None, dataset_type=None):
 _envs_registered = {}
 
 
-def _get_env_spec(env_name: str = None, dataset_name: str = None) -> Tuple[int, int]:
+def _get_env_spec(env_name: str = None, dataset_name: str = None) -> tuple[int, int]:
     # breakpoint()
     assert env_name or dataset_name, "Must pass in either env_name or dataset_name"
     if env_name in _envs_registered:

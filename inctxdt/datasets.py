@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 from inctxdt.episode_data import EpisodeData
 from inctxdt.datasets_meta import AcrossEpisodeMeta, MultipleEpisodeMeta
 
-from inctxdt.config import _envs_registered
+from inctxdt.env_helper import _envs_registered
 
 
 def discounted_cumsum(x: np.ndarray, gamma: float, dtype: np.dtype | str = np.float32) -> np.ndarray:

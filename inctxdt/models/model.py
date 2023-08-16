@@ -19,17 +19,19 @@ class TransformerBlock(nn.Module):
         num_heads: int,
         attention_dropout: float,
         residual_dropout: float,
+        feedforward_scale: int = 4,
     ):
         super().__init__()
+        self.feedforward_dim = feedforward_scale * embedding_dim
         self.norm1 = nn.LayerNorm(embedding_dim)
         self.norm2 = nn.LayerNorm(embedding_dim)
         self.drop = nn.Dropout(residual_dropout)
 
         self.attention = nn.MultiheadAttention(embedding_dim, num_heads, attention_dropout, batch_first=True)
         self.mlp = nn.Sequential(
-            nn.Linear(embedding_dim, 4 * embedding_dim),
+            nn.Linear(embedding_dim, self.feedforward_dim),
             nn.GELU(),
-            nn.Linear(4 * embedding_dim, embedding_dim),
+            nn.Linear(self.feedforward_dim, embedding_dim),
             nn.Dropout(residual_dropout),
         )
         # True value indicates that the corresponding position is not allowed to attend
@@ -71,10 +73,10 @@ class DecisionTransformer(nn.Module):
         state_dim: int = None,
         action_dim: int = None,
         seq_len: int = 200,
-        episode_len: int = 1000,
+        episode_len: int = 4096,
         embedding_dim: int = 128,
         num_layers: int = 4,
-        num_heads: int = 8,
+        num_heads: int = 4,
         attention_dropout: float = 0.0,
         residual_dropout: float = 0.0,
         embedding_dropout: float = 0.0,
@@ -92,7 +94,7 @@ class DecisionTransformer(nn.Module):
         self.blocks = nn.ModuleList(
             [
                 TransformerBlock(
-                    seq_len=seq_len * seq_len,
+                    seq_len=episode_len,
                     embedding_dim=embedding_dim,
                     num_heads=num_heads,
                     attention_dropout=attention_dropout,
@@ -109,8 +111,6 @@ class DecisionTransformer(nn.Module):
             seq_len=seq_len,
             state_dim=state_dim,
             action_dim=action_dim,
-            stack_idxs=[0, 1],
-            kernel_size=(1, 2),
         )
 
         # self.embed_output_layers = DynamicLayers(env_spec=env_spec, embedding_dim=embedding_dim)
@@ -168,10 +168,6 @@ class DecisionTransformer(nn.Module):
             pass
 
 
-def multi_action_head(self, x: torch.Tensor, **kwargs):
-    return self._multi_action_head_mods(self.out_norm(x)[:, 1::3])
-
-
 if __name__ == "__main__":
     batch_size, seq_len, state_dim, action_dim = 4, 10, 17, 6
     states = torch.rand(batch_size, seq_len, state_dim)
@@ -191,4 +187,3 @@ if __name__ == "__main__":
         num_heads=2,
     )
     out = model(states=states, actions=actions, returns_to_go=returns_to_go, timesteps=timesteps)
-    breakpoint()
