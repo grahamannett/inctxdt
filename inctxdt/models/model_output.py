@@ -2,27 +2,22 @@ from dataclasses import dataclass, field
 
 import torch
 from typing import Any, Tuple
-from collections import UserDict
 
 from transformers.modeling_outputs import BaseModelOutput
 
 
+class MetaOutput(type):
+    def __call__(cls, *args, **kwargs):
+        if kwargs.pop("only_logits", None):
+            return kwargs.get("logits", *args)
+        return super().__call__(*args, **kwargs)
+
+
 @dataclass
-class ModelOutput(UserDict):
+# class ModelOutput(OrderedDict, metaclass=MetaOutput):
+class ModelOutput(metaclass=MetaOutput):
     logits: torch.Tensor
     extra: Any = field(default=None, repr=False)
-
-    def __new__(cls, *args, **kwargs):
-        """all argument to be passed so we can only send out logits if needed
-        for instance testing with another person eval function
-
-        Returns:
-            _type_: _description_
-        """
-        if kwargs.get("only_logits", False):
-            return kwargs.get("logits", *args)
-
-        return super().__new__(cls)
 
     def __iter__(self):
         return iter(self.__dict__.items())
@@ -32,3 +27,15 @@ class ModelOutput(UserDict):
         Convert self to a tuple containing all the attributes/keys that are not `None`.
         """
         return tuple(self[k] for k in self.keys())
+
+    def __getitem__(self, k):
+        return self.__dict__[k]
+
+    def __setitem__(self, k, v):
+        self.__dict__[k] = v
+
+    def keys(self):
+        return [k for k, v in self.__dict__.items() if v is not None]
+
+    def items(self):
+        return {k: v for k, v in self.__dict__.items() if v is not None}.items()
