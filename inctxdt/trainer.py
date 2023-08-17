@@ -187,9 +187,6 @@ def train(
             accelerator.wait_for_everyone()
             accelerator.save_model(model, f"{config.exp_dir}/model_{epoch}")
 
-        # _model = accelerator.unwrap_model(model)
-        # accelerator.save_model(_model, f"{config.exp_dir}/umodel_{epoch}")
-
     # epoch_pbar = trange(config.epochs, desc=f"Epoch", disable=not _main_proc, leave=False)
     epoch_pbar = range(config.epochs)
 
@@ -227,6 +224,7 @@ def train(
             env_spec,
             target_return=config.target_return * config.reward_scale,
             device=accelerator.device,
+            output_sequential=True,
         )
 
         eval_ret /= config.reward_scale

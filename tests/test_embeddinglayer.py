@@ -1,13 +1,11 @@
 import unittest
 
-
 import torch
+
 from inctxdt.batch import Batch, Collate
-
-from inctxdt.config import EnvSpec, Config
+from inctxdt.config import Config, EnvSpec
 from inctxdt.d4rl_datasets import D4rlDataset
-from inctxdt.layers.dynamic_layers import DynamicEmbedding, DynamicLayers
-
+from inctxdt.models.layers.dynamic_layers import DynamicEmbedding, DynamicLayers
 
 device = "cuda"
 
