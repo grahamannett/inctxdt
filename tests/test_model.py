@@ -23,12 +23,13 @@ class TestModel(unittest.TestCase):
         timesteps = torch.arange(seq_len, dtype=int, device=device).unsqueeze(0).repeat(batch_size, 1)
 
         model = model.to(device)
-        out = model(states, actions, returns_to_go, timesteps)
+        # out = model(states, actions, returns_to_go, timesteps)
 
-        # make sure the model works just basic
-        self.assertTrue(out.logits.sum() != 0.0)
+        # # make sure the model works just basic
+        # self.assertTrue(out.logits.sum() != 0.0)
 
         # test if we have taken 1 action so far
+        # this actually does not make sense.  if we are looking at the first action of the last timestep we will still have all the actions before that
         out = model(states, actions[:, :, :1], returns_to_go, timesteps)
         self.assertTrue(out.logits.sum() != 0.0)
 

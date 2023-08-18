@@ -144,32 +144,28 @@ def venv_eval_rollout(
     dones = torch.zeros(num_envs, dtype=torch.bool)
 
     for step in trange(max_episode_len, desc="Eval Rollout"):
-        step += init_idx
+        # step += init_idx
         # first select history up to step, then select last seq_len states,
         # step + 1 as : operator is not inclusive, last action is dummy with zeros
         # (as model will predict last, actual last values are not important)
 
-        output = model(
-            states[~dones, : step + 1][:, -seq_len:],  # noqa
-            actions[~dones, : step + 1][:, -seq_len:],  # noqa
-            returns[~dones, : step + 1][:, -seq_len:],  # noqa
-            timesteps[~dones, : step + 1][:, -seq_len:],  # noqa
-        )
-        logits = output.logits
-
         if output_sequential:
-            actions_ = [output.logits]
+            # means we need to grab FIRST action
+            # breakpoint()
+            logits = _sequential_output_step(
+                states, actions, returns, timesteps, dones, step, seq_len, model, action_dim=env_spec.action_dim
+            )
 
-            for i in range(1, env_spec.action_dim):
-                output = model(
-                    states[~dones, : step + 1][:, -seq_len:],  # noqa
-                    actions[~dones, : step + 1][:, -seq_len:],  # noqa
-                    returns[~dones, : step + 1][:, -seq_len:],  # noqa
-                    timesteps[~dones, : step + 1][:, -seq_len:],  # noqa
-                )
-                actions_.append(output.logits)
+        else:
+            logits = model(
+                states[~dones, : step + 1][:, -seq_len:],
+                actions[~dones, : step + 1][:, -seq_len:],
+                returns[~dones, : step + 1][:, -seq_len:],
+                timesteps[~dones, : step + 1][:, -seq_len:],
+            ).logits
 
-            logits = torch.stack(actions_, dim=-1)
+            if (logits.ndim > 3) and (logits.size(-2) != env_spec.action_dim):
+                logits = logits[:, :, : env_spec.action_dim]
 
         predicted_action = logits.reshape(venv.num_envs, -1)
         predicted_action = predicted_action[~dones, -env_spec.action_dim :].squeeze().cpu().numpy()
@@ -183,12 +179,9 @@ def venv_eval_rollout(
         else:
             step_dones = step_dones[0]
 
-        # NOTE: there will be truncated and terminated later - throw error and catch this
-        # assert len(step_dones) == 1, "not sure if i handle these correctly. need to handle terminated/truncated"
-
         dones[step_dones] = True
 
-        # next_state = fix_obs_dict(next_state)
+        next_state = fix_obs_dict(next_state)
 
         # at step t, we predict a_t, get s_{t + 1}, r_{t + 1}
         actions[~dones, step] = torch.as_tensor(predicted_action[~dones], device=device)
@@ -203,6 +196,35 @@ def venv_eval_rollout(
             break
 
     return venv_episode_return, venv_episode_len
+
+
+def _sequential_output_step(states, actions, returns, timesteps, dones, step, seq_len, model, action_dim):
+    """generate new actions sequentially, at each timestep"""
+
+    logits = []
+
+    output = model(
+        states=states[~dones, : step + 1][:, -seq_len:],
+        actions=actions[~dones, : step + 1][:, -seq_len:] if step > 0 else None,
+        returns_to_go=returns[~dones, : step + 1][:, -seq_len:],
+        timesteps=timesteps[~dones, : step + 1][:, -seq_len:],
+    )
+
+    logits.append(output.logits[~dones, -1, 0].view(-1))
+    actions[~dones, step, 0] = logits[-1]
+
+    for act_i in range(1, action_dim):
+        output = model(
+            states=states[~dones, : step + 1][:, -seq_len:],
+            actions=actions[~dones, : step + 1][:, -seq_len:],
+            returns_to_go=returns[~dones, : step + 1][:, -seq_len:],
+            timesteps=timesteps[~dones, : step + 1][:, -seq_len:],
+        )
+
+        logits.append(output.logits[~dones, -1, act_i].view(-1))
+        actions[~dones, step, act_i] = logits[-1]
+
+    return torch.stack(logits, dim=-1)
 
 
 if __name__ == "__main__":

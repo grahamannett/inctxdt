@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from inctxdt.batch import Collate
 from inctxdt.config import Config, EnvSpec
 from inctxdt.d4rl_datasets import D4rlAcrossEpisodeDataset, D4rlDataset, D4rlMultipleDataset
-from inctxdt.datasets import AcrossEpisodeDataset, MinariDataset, MultipleMinariDataset
+from inctxdt.minari_datasets import AcrossEpisodeDataset, MinariDataset, MultipleMinariDataset
 from inctxdt.env_helper import get_env
 from inctxdt.models.model import DecisionTransformer
 from inctxdt.trainer import train
@@ -34,8 +34,9 @@ def init_trackers(accelerator, config):
     )
 
 
-def run_baseline(config, dataset, accelerator=None, env_spec=None, env=None, venv=None):
-    from inctxdt.baseline_dt import DecisionTransformer as DecisionTransformerBaseline
+def dataloader_from_dataset(dataset, dataloader=None, config=None, accelerator=None):
+    if dataloader:
+        return dataloader
 
     collater = Collate(
         batch_first=True,
@@ -50,10 +51,18 @@ def run_baseline(config, dataset, accelerator=None, env_spec=None, env=None, ven
         num_workers=config.num_workers,
         collate_fn=collater,
     )
+    return dataloader
+
+
+def run_baseline(config, dataset=None, dataloader=None, accelerator=None, env_spec=None, env=None, venv=None):
+    assert dataset or dataloader, "either dataset or dataloader must be provided"
+    from inctxdt.baseline_dt import DecisionTransformer as DecisionTransformerBaseline
+
+    dataloader = dataloader_from_dataset(dataset, dataloader, config, accelerator=accelerator)
 
     model = DecisionTransformerBaseline(
-        state_dim=dataset.state_dim,
-        action_dim=dataset.action_dim,
+        state_dim=env_spec.state_dim,
+        action_dim=env_spec.action_dim,
         embedding_dim=config.embedding_dim,
         num_layers=config.num_layers,
         num_heads=config.num_heads,
@@ -64,21 +73,14 @@ def run_baseline(config, dataset, accelerator=None, env_spec=None, env=None, ven
     train(model, dataloader=dataloader, config=config, accelerator=accelerator, env_spec=env_spec, env=env, venv=venv)
 
 
-def run_autoregressive(config, dataset, accelerator=None, env_spec=None, env=None, venv=None):
-    collater = Collate(batch_first=True, device=None if accelerator else config.device)
-    collater.return_fn = dataset.collate_fn(batch_first=True)
+def run_autoregressive(config, dataset=None, dataloader=None, accelerator=None, env_spec=None, env=None, venv=None):
+    assert dataset or dataloader, "either dataset or dataloader must be provided"
 
-    dataloader = DataLoader(
-        dataset,
-        batch_size=config.batch_size,
-        shuffle=config.shuffle,
-        num_workers=config.num_workers,
-        collate_fn=collater,
-    )
+    dataloader = dataloader_from_dataset(dataset, dataloader, config, accelerator=accelerator)
 
     model = DecisionTransformer(
-        state_dim=dataset.state_dim,
-        action_dim=dataset.action_dim,
+        state_dim=env_spec.state_dim,
+        action_dim=env_spec.action_dim,
         embedding_dim=config.embedding_dim,
         num_layers=config.num_layers,
         num_heads=config.num_heads,
@@ -110,7 +112,12 @@ def main():
     torch.manual_seed(config.seed)
 
     DatasetType = dispatch_dataset[config.dataset_type]
-    dataset = DatasetType(dataset_name=config.dataset_name, seq_len=config.seq_len, reward_scale=config.reward_scale)
+    dataset = DatasetType(
+        dataset_name=config.dataset_name,
+        seq_len=config.seq_len,
+        reward_scale=config.reward_scale,
+        max_num_episodes=config.max_num_episodes,
+    )
 
     _, env, venv, obs_space, act_space = get_env(config=config, dataset=dataset)
 
@@ -125,6 +132,7 @@ def main():
     dataset.state_dim = env_spec.state_dim
     dataset.action_dim = env_spec.action_dim
 
+    # usually i try to init tracker last so i have last few seconds to exit script if needed
     accelerator = Accelerator(log_with="wandb")
     init_trackers(accelerator, config)
 

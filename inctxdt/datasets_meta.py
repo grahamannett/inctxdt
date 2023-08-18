@@ -1,7 +1,33 @@
 from dataclasses import asdict
 
-from inctxdt.episode_data import EpisodeData
+import torch
+
+from inctxdt.config import Config
 from torch.utils.data import Dataset
+
+
+class Discretizer:
+    def create_discretizer(
+        self, type_name, arr: torch.Tensor, n_bins: int = 1024, eps: float = 1e-6, range: tuple[int] = (-1, 1)
+    ):
+        if not hasattr(self, "discretizers"):
+            self.discretizers = {}
+
+        hist = torch.histogram(arr.view(-1), bins=n_bins, range=(range[0] - eps, range[1] + eps))
+        self.discretizers[type_name] = hist
+
+    def encode(self, x: torch.Tensor, type_name: str):
+        # seems the same as search sorted?
+        return torch.bucketize(x, self.discretizers[type_name].bin_edges, right=False, out_int32=False)
+
+    def decode(self, x: torch.Tensor, type_name: str):
+        return self.discretizers[type_name].bin_edges[x]
+
+
+class BaseDataset(Dataset):
+    @classmethod
+    def from_config(cls, config: Config):
+        return cls(**asdict(config))
 
 
 class AcrossEpisodeMeta:

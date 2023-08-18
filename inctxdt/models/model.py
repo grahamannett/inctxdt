@@ -6,7 +6,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from inctxdt.config import EnvSpec
-from inctxdt.models.layers import DynamicLayers, OriginalActionHead, SequentialAction, StackedEnvEmbedding
+from inctxdt.models import layers
+
+# import DynamicLayers, OriginalActionHead, SequentialAction, StackedEnvEmbedding, AgnosticEmbed
 from inctxdt.models.model_output import ModelOutput
 
 
@@ -104,7 +106,7 @@ class DecisionTransformer(nn.Module):
             ]
         )
 
-        Model_Class = SequentialAction  #  StackedEnvEmbedding
+        Model_Class = layers.AgnosticEmbed  #  StackedEnvEmbedding
         self.embed_output_layers = Model_Class(
             embedding_dim=embedding_dim,
             episode_len=episode_len,
@@ -112,9 +114,9 @@ class DecisionTransformer(nn.Module):
             state_dim=state_dim,
             action_dim=action_dim,
         )
+        self.embed_output_layers.patch_parent(parent=self)
 
         # self.embed_output_layers = DynamicLayers(env_spec=env_spec, embedding_dim=embedding_dim)
-        self.embed_output_layers.patch_parent(parent=self)
 
         self.seq_len = seq_len
         self.embedding_dim = embedding_dim

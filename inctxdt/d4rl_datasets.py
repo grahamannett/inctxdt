@@ -190,15 +190,14 @@ class D4rlDataset(BaseD4RLDataset):
 
 
 class D4rlAcrossEpisodeDataset(AcrossEpisodeMeta, D4rlDataset):
-    def __init__(self, dataset_name: str, max_num_epsisodes: int = 2, *args, **kwargs):
+    def __init__(self, dataset_name: str, max_num_episodes: int = 2, *args, **kwargs):
         super().__init__(dataset_name, *args, **kwargs)
-        self.max_num_episodes = max_num_epsisodes
+        self.max_num_episodes = max_num_episodes
 
     def __getitem__(self, idx: int) -> Any:
         idxs = [idx]
 
         while len(idxs) < self.max_num_episodes:
-            # print("getting")
             if (new_idx := random.randint(0, len(self.dataset_indices) - 1)) not in idxs:
                 idxs.append(new_idx)
 

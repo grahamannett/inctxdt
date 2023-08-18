@@ -21,7 +21,7 @@ RUN mkdir -p /root/.mujoco \
 
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/root/.mujoco/mujoco210/bin
 
-RUN pip install wandb omegaconf stable-baselines3[extra] transformers dataset 'mujoco-py<2.2,>=2.1'
+RUN pip install wandb omegaconf stable-baselines3[extra] transformers dataset "mujoco-py<2.2,>=2.1" "cython<3"
 RUN pip install git+https://github.com/Farama-Foundation/d4rl@master#egg=d4rl
 RUN pip install git+https://github.com/Farama-Foundation/Minari@main#egg=minari
 
@@ -36,5 +36,6 @@ ADD conf /workspace/conf
 ADD inctxdt /workspace/inctxdt
 ADD scripts /workspace/scripts
 
-ADD setup.py /workspace/setup.py
+# ADD setup.py /workspace/setup.py
+ADD pyproject.toml /workspace/pyproject.toml
 RUN pip install -e .

@@ -39,6 +39,9 @@ def default_optimizer(model, config):
 def get_loss(model_output: ModelOutput, batch: Batch) -> torch.Tensor:
     target, mask, pred = batch.actions, batch.mask, model_output.logits
 
+    if (pred.ndim != target.ndim) and (pred.size(-2) != target.size(-1)):
+        pred = pred[..., : target.size(-1), :]
+
     # for mse we need shapes equal
     if pred.shape != target.shape:
         pred = pred.reshape(target.shape)
@@ -224,7 +227,7 @@ def train(
             env_spec,
             target_return=config.target_return * config.reward_scale,
             device=accelerator.device,
-            output_sequential=True,
+            output_sequential=config.eval_output_sequential,
         )
 
         eval_ret /= config.reward_scale

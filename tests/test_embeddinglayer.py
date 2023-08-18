@@ -6,11 +6,28 @@ from inctxdt.batch import Batch, Collate
 from inctxdt.config import Config, EnvSpec
 from inctxdt.d4rl_datasets import D4rlDataset
 from inctxdt.models.layers.dynamic_layers import DynamicEmbedding, DynamicLayers
+from inctxdt.models.layers.stacked_layers import AgnosticEmbed
 
-device = "cuda"
+device = "cpu"
 
 
 class TestEmbeddingLayer(unittest.TestCase):
+    def test_agnostic(self):
+        embed_mod = AgnosticEmbed(128, 500)
+
+        batch_size = 32
+        seq_len = 20
+        state_dim = 17
+        action_dim = 6
+
+        states = torch.rand(batch_size, seq_len, state_dim, device=device)
+        actions = torch.rand(batch_size, seq_len, action_dim, device=device)
+        returns_to_go = torch.rand(batch_size, seq_len, 1, device=device)
+        timesteps = torch.arange(seq_len, dtype=torch.long, device=device).view(1, -1).repeat(batch_size, 1)
+
+        out = embed_mod(states=states, actions=actions, returns_to_go=returns_to_go, timesteps=timesteps)
+        self.assertTrue(out.sum() > 0)
+
     def test_dynamic_embedding(self):
         # base_spec = EnvSpec(episode_len=1000, seq_len=200, env_name="halfcheetah-medium-v2")
 

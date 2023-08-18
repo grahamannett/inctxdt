@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 from pyrallis import dump
 
@@ -58,14 +58,9 @@ class LogConfig:
 
 @dataclass
 class Config:
-    # --- SUB CONFIG TYPES
-    # LogConfig = LogConfig
-
-    # --- SUB CONFIG TYPES
-
     # dataset_name: str = "pointmaze-umaze-v1"
     # dataset_type: str = "minari"
-    dataset_name: str = "halfcheetah-medium-v2"
+    dataset_name: Union[str, List[str]] = "halfcheetah-medium-v2"
     dataset_type: str = "d4rl"
 
     device: str = "cpu"
@@ -84,6 +79,7 @@ class Config:
     # dataset
     seq_len: int = 30
     episode_len: int = 2048
+    max_num_episodes: int = 2
 
     num_layers: int = 4
     num_heads: int = 4
@@ -107,12 +103,10 @@ class Config:
     reward_scale: float = 0.001
     target_return: float = 12000.0
     eval_episodes: int = 5
+    eval_output_sequential: bool = False
 
     debug: str = None
     seed: int = 42
-
-    # _debug: bool = False
-    # __singleton = None
 
     def __post_init__(self):
         self._check_dataset()
@@ -131,7 +125,6 @@ class Config:
 
     @property
     def exp_dir(self) -> str:
-        # Properties are great for arguments that can be derived from existing ones
         return f"{self.exp_root}/{self.exp_name}"
 
     @property
@@ -150,15 +143,3 @@ class Config:
         output_str += f"=== Config ===\n"
         output_str += self.console_info
         return output_str
-
-
-# def _debug_note(note: str = None):
-#     if note in ["", None]:
-#         return
-
-#     import atexit
-# def _print_info():
-#     print("===" * 30)
-#     print("\t--RUN/DEBUG-NOTE:")
-#     print("\n\n==>🤠|>", note.upper(), "<|🤠<==\n\n")
-#     print("===" * 30)
