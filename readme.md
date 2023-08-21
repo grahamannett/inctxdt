@@ -24,3 +24,7 @@ sudo apt install libosmesa6-dev libgl1-mesa-glx libglfw3 libglew-dev patchelf
 docker run -v /home/graham/.d4rl:/root/.d4rl -v /home/graham/.cache:/root/.cache
 
 docker run --rm --ipc=host --gpus all -it -v $HOME/.d4rl:/root/.d4rl -v $HOME/.cache:/root/.cache inctxdt/base:latest /bin/bash
+
+
+# to run on hpc:
+follow dockerfile for setting up mujoco and python libraries. since you cant install with apt you will also need to use the following `conda install mesalib glew glfw patchelf -y`.  Also make sure you set the LD_LIBRARY_PATH
