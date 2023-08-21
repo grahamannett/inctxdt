@@ -11,7 +11,7 @@ from tqdm import trange
 from inctxdt.env_helper import _envs_registered
 from inctxdt.episode_data import EpisodeData
 from inctxdt.batch import Batch, EpisodeList
-from inctxdt.datasets_meta import AcrossEpisodeMeta, MultipleEpisodeMeta
+from inctxdt.datasets_meta import BaseDataset, AcrossEpisodeMeta, MultipleEpisodeMeta
 
 
 def wrap_env(
@@ -81,7 +81,7 @@ def load_d4rl_trajectories(
     return traj, info
 
 
-class BaseD4RLDataset(Dataset):
+class BaseD4RLDataset(BaseDataset):
     _dataset_type = "d4rl"
 
     def __init__(self, dataset_name: str, seq_len: int = 20, reward_scale: float = 1.0, *args, **kwargs):

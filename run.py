@@ -106,18 +106,37 @@ dispatch_dataset = {
 }
 
 
-def main():
-    config = pyrallis.parse(config_class=Config)
-    torch.cuda.manual_seed(config.seed)
-    torch.manual_seed(config.seed)
+def make_dataset_from_config(config: Config, dataset_name: str = None):
+    dataset_name = dataset_name or config.dataset_name
+
+    if isinstance(dataset_name, list):
+        return D4rlMultipleDataset([make_dataset_from_config(config, name) for name in dataset_name])
 
     DatasetType = dispatch_dataset[config.dataset_type]
     dataset = DatasetType(
-        dataset_name=config.dataset_name,
+        dataset_name=dataset_name,
         seq_len=config.seq_len,
         reward_scale=config.reward_scale,
         max_num_episodes=config.max_num_episodes,
     )
+
+    return dataset
+
+
+def main():
+    config = pyrallis.parse(config_class=Config)
+    torch.cuda.manual_seed(config.seed)
+    torch.manual_seed(config.seed)
+    # breakpoint()
+    dataset = make_dataset_from_config(config)
+
+    # DatasetType = dispatch_dataset[config.dataset_type]
+    # dataset = DatasetType(
+    #     dataset_name=config.dataset_name,
+    #     seq_len=config.seq_len,
+    #     reward_scale=config.reward_scale,
+    #     max_num_episodes=config.max_num_episodes,
+    # )
 
     _, env, venv, obs_space, act_space = get_env(config=config, dataset=dataset)
 

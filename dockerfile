@@ -4,7 +4,6 @@
 # docker run --gpus all -v /home/graham/.d4rl:/root/.d4rl -v /home/graham/code/incontext-trajectory-transformer/data:/workspace/data -it inctx:latest bash
 # -----
 
-
 FROM pytorch/pytorch:2.0.1-cuda11.7-cudnn8-devel
 
 WORKDIR /workspace
@@ -24,6 +23,7 @@ ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/root/.mujoco/mujoco210/bin
 RUN pip install wandb omegaconf stable-baselines3[extra] transformers dataset "mujoco-py<2.2,>=2.1" "cython<3"
 RUN pip install git+https://github.com/Farama-Foundation/d4rl@master#egg=d4rl
 RUN pip install git+https://github.com/Farama-Foundation/Minari@main#egg=minari
+RUN pip install pyrallis accelerate tensordict fast-pytorch-kmeans
 
 # on first run d4rl needs to compile something
 RUN python -c 'import gym; import d4rl'
@@ -35,7 +35,12 @@ RUN python -c 'import gym; import d4rl'
 ADD conf /workspace/conf
 ADD inctxdt /workspace/inctxdt
 ADD scripts /workspace/scripts
+RUN chmod +x /workspace/scripts/*.sh
 
-# ADD setup.py /workspace/setup.py
 ADD pyproject.toml /workspace/pyproject.toml
 RUN pip install -e .
+
+ADD run.py /workspace/run.py
+
+# use cmd instead of entrypoint so we can use bash if needed for debugging
+CMD [ "/workspace/scripts/entrypoint.sh" ]

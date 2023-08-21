@@ -15,3 +15,12 @@ you likely need `pip install "cython<3"` unless the cython bug is fixed
 apt related things you probably need:
 
 sudo apt install libosmesa6-dev libgl1-mesa-glx libglfw3 libglew-dev patchelf
+
+
+
+
+# to run with docker
+
+docker run -v /home/graham/.d4rl:/root/.d4rl -v /home/graham/.cache:/root/.cache
+
+docker run --rm --ipc=host --gpus all -it -v $HOME/.d4rl:/root/.d4rl -v $HOME/.cache:/root/.cache inctxdt/base:latest /bin/bash

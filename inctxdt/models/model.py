@@ -106,7 +106,7 @@ class DecisionTransformer(nn.Module):
             ]
         )
 
-        Model_Class = layers.AgnosticEmbed  #  StackedEnvEmbedding
+        Model_Class = layers.SequentialAction  #  StackedEnvEmbedding
         self.embed_output_layers = Model_Class(
             embedding_dim=embedding_dim,
             episode_len=episode_len,

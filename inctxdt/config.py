@@ -60,7 +60,7 @@ class LogConfig:
 class Config:
     # dataset_name: str = "pointmaze-umaze-v1"
     # dataset_type: str = "minari"
-    dataset_name: Union[str, List[str]] = "halfcheetah-medium-v2"
+    dataset_name: Union[list[str], str] = "halfcheetah-medium-v2"
     dataset_type: str = "d4rl"
 
     device: str = "cpu"
@@ -84,6 +84,7 @@ class Config:
     num_layers: int = 4
     num_heads: int = 4
     embedding_dim: int = 256
+    embed_class: str = "SequentialAction"
 
     adist: bool = False  # accelerate distributed
     dist: bool = False  # pytorch distributed

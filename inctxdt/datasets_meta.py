@@ -6,7 +6,28 @@ from inctxdt.config import Config
 from torch.utils.data import Dataset
 
 
-class Discretizer:
+class DiscretizedDataset(Dataset):
+    def __init__(self, dataset: Dataset):
+        self.dataset = dataset
+
+    def __getitem__(self, idx):
+        episode = self.dataset[idx]
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def use_with_dataset(self, dataset: Dataset):
+        dataset._base_get_item = dataset.__getitem__
+
+        def _wrap_getitem(self, *args, **kwargs):
+            episode = self._base_get_item(*args, **kwargs)
+            episode = asdict(episode)
+            breakpoint()
+            return episode
+
+        dataset.__getitem__ = _wrap_getitem
+        return dataset
+
     def create_discretizer(
         self, type_name, arr: torch.Tensor, n_bins: int = 1024, eps: float = 1e-6, range: tuple[int] = (-1, 1)
     ):
@@ -28,6 +49,9 @@ class BaseDataset(Dataset):
     @classmethod
     def from_config(cls, config: Config):
         return cls(**asdict(config))
+
+    # def use_discretizer(self, discretizer: Discretizer):
+    #     discretizer.use_with_dataset(self)
 
 
 class AcrossEpisodeMeta:

@@ -86,7 +86,7 @@ class SequentialAction(BaseInputOutput):
         self.return_emb = nn.Linear(1, embedding_dim)
 
         self.action_emb = nn.Linear(1, embedding_dim)  # action MUST be unpacked into time dim
-        self.action_pos_emb = nn.Embedding(action_dim, embedding_dim)
+        # self.action_pos_emb = nn.Embedding(action_dim, embedding_dim)
 
         # output head
         self.action_head = nn.Sequential(nn.Linear(embedding_dim, 1), nn.Tanh())
