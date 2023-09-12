@@ -1,14 +1,10 @@
-from typing import List, Optional, Tuple
+from typing import Optional
 
-# from gymnasium import Env
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from inctxdt.config import EnvSpec
 from inctxdt.models import layers
-
-# import DynamicLayers, OriginalActionHead, SequentialAction, StackedEnvEmbedding, AgnosticEmbed
 from inctxdt.models.model_output import ModelOutput
 
 
@@ -84,6 +80,7 @@ class DecisionTransformer(nn.Module):
         embedding_dropout: float = 0.0,
         max_action: float = 1.0,
         env_spec: Optional["EnvSpec"] = None,
+        EmbedClass: Optional[str] = "SequentialAction",
         **kwargs,
     ):
         super().__init__()
@@ -106,8 +103,8 @@ class DecisionTransformer(nn.Module):
             ]
         )
 
-        Model_Class = layers.SequentialAction  #  StackedEnvEmbedding
-        self.embed_output_layers = Model_Class(
+        EmbedClass = getattr(layers, EmbedClass)  # layers.SequentialAction  #  StackedEnvEmbedding
+        self.embed_output_layers = EmbedClass(
             embedding_dim=embedding_dim,
             episode_len=episode_len,
             seq_len=seq_len,
@@ -161,9 +158,9 @@ class DecisionTransformer(nn.Module):
         for block in self.blocks:
             out = block(out, padding_mask=padding_mask)
 
-        logits = self.forward_output(x=out)
+        logits, obs_logits = self.forward_output(x=out)
 
-        return ModelOutput(logits=logits)
+        return ModelOutput(logits=logits, extra={"obs_logits": obs_logits})
 
     def predict_action(self, len_act: int, *args, **kwargs):
         for i in range(len_act):

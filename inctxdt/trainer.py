@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 from os import makedirs
 
@@ -36,6 +36,19 @@ def default_optimizer(model, config):
     return optimizer, scheduler
 
 
+def _secondary_loss(
+    obs_pred: torch.Tensor,
+    obs_target: torch.Tensor,
+    mask: Optional[torch.Tensor] = None,
+    scale_factor: float = 1.0,
+):
+    loss = nn.functional.mse_loss(obs_pred, obs_target, reduction="none")
+    if mask is not None:
+        loss = (loss * mask.unsqueeze(-1)).mean()
+    loss *= scale_factor
+    return loss
+
+
 def get_loss(model_output: ModelOutput, batch: Batch) -> torch.Tensor:
     target, mask, pred = batch.actions, batch.mask, model_output.logits
 
@@ -48,6 +61,10 @@ def get_loss(model_output: ModelOutput, batch: Batch) -> torch.Tensor:
 
     loss = nn.functional.mse_loss(pred, target, reduction="none")
     loss = (loss * mask.unsqueeze(-1)).mean()
+
+    # if model_output.extra is not None:
+    #     loss += _secondary_loss(model_output.extra["obs_logits"], batch.states, mask, scale_factor=1.0)
+
     return loss
 
 

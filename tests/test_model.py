@@ -1,18 +1,86 @@
 import unittest
 
 import torch
+import torch.nn as nn
 
-from inctxdt.models.model import DecisionTransformer
+from inctxdt.models.model import DecisionTransformer, TransformerBlock
+
+
+batch_size = 16
+state_dim = 17
+action_dim = 6
+seq_len = 30
+device = "cuda"
+
+# Optionally use the context manager to ensure one of the fused kerenels is run
+
+
+class ELayer(nn.Module):
+    def __init__(self, embedding_dim: int):
+        super().__init__()
+        # self.dropout = nn.Dropout(0.1)
+        self.linear = nn.Linear(1, embedding_dim)
+        self.norm = nn.LayerNorm(embedding_dim)
+        self.proj_out = nn.Parameter(torch.rand(embedding_dim, embedding_dim))
+
+    def forward(self, x: torch.Tensor):
+        x = x.unsqueeze(-1)
+        x = self.linear(x)
+        # x = self.dropout(x)
+        x = self.norm(x)
+
+        # [batch, seq, obs_dim, proj_dim] x [proj_dim, proj_dim] -> [batch, seq, proj_dim]
+        x = torch.einsum("bsop,ed->bsd", x, self.proj_out)
+        breakpoint()
+        return x
+
+
+class TestTransformerBlock(unittest.TestCase):
+    def test_block(self):
+        episode_len = 1000
+        embedding_dim = 128
+        num_heads = 1
+        attention_dropout, residual_dropout = 0.1, 0.1
+
+        # query = torch.rand(32, 8, 128, 64, dtype=torch.float16, device="cuda")
+        # key = torch.rand(32, 8, 128, 64, dtype=torch.float16, device="cuda")
+        # value = torch.rand(32, 8, 128, 64, dtype=torch.float16, device="cuda")
+        # with torch.backends.cuda.sdp_kernel(enable_math=False):
+        #     out = torch.nn.functional.scaled_dot_product_attention(query, key, value)
+
+        # breakpoint()
+        # class Model(nn.Module):
+        #     def __init__(self):
+        #         super().__init__()
+        #         self.linear = nn.Linear(1, 32)
+        #         self.block = TransformerBlock(
+        #             seq_len=seq_len,
+        #             embedding_dim=32,
+        #             num_heads=2,
+        #             attention_dropout=attention_dropout,
+        #             residual_dropout=residual_dropout,
+        #         )
+
+        #     def forward(self, x):
+        #         batch_size, seq_len, state_dim = x.shape
+
+        #         x = x.unsqueeze(-1)
+        #         x = self.linear(x)
+        #         x = x.reshape(batch_size, -1, 32)
+        #         x = x.permute(0, 2, 1)
+        #         breakpoint()
+        #         x = self.block(x)
+        #         return x
+
+        # model = Model().cuda()
+        model = ELayer(128).cuda()
+
+        state_input = torch.rand(batch_size, seq_len, state_dim, device=device)
+        out = model(state_input)
 
 
 class TestModel(unittest.TestCase):
     def test_short_action(self):
-        batch_size = 16
-        state_dim = 17
-        action_dim = 6
-        seq_len = 30
-        device = "cuda"
-
         model = DecisionTransformer(state_dim=17, action_dim=6, seq_len=30, episode_len=2048)
 
         states = torch.rand(batch_size, seq_len, state_dim, device=device)

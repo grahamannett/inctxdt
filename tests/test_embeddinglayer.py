@@ -11,6 +11,8 @@ from inctxdt.models.layers.stacked_layers import AgnosticEmbed
 device = "cpu"
 
 
+
+
 class TestEmbeddingLayer(unittest.TestCase):
     def test_agnostic(self):
         embed_mod = AgnosticEmbed(128, 500)

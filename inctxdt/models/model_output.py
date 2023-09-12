@@ -10,6 +10,8 @@ class MetaOutput(type):
     def __call__(cls, *args, **kwargs):
         if kwargs.pop("only_logits", None):
             return kwargs.get("logits", *args)
+
+        # if i have an extra key should i modify the class?
         return super().__call__(*args, **kwargs)
 
 
