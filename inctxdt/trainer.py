@@ -52,18 +52,17 @@ def _secondary_loss(
 def get_loss(model_output: ModelOutput, batch: Batch) -> torch.Tensor:
     target, mask, pred = batch.actions, batch.mask, model_output.logits
 
-    if (pred.ndim != target.ndim) and (pred.size(-2) != target.size(-1)):
-        pred = pred[..., : target.size(-1), :]
-
-    # for mse we need shapes equal
     if pred.shape != target.shape:
-        pred = pred.reshape(target.shape)
+        pred = pred.squeeze()
+
+    if pred.shape != target.shape:
+        breakpoint()
 
     loss = nn.functional.mse_loss(pred, target, reduction="none")
     loss = (loss * mask.unsqueeze(-1)).mean()
 
     # if model_output.extra is not None:
-    #     loss += _secondary_loss(model_output.extra["obs_logits"], batch.states, mask, scale_factor=1.0)
+    #     loss += _secondary_loss(model_output.extra["obs_logits"], batch.states, mask, scale_factor=0.1)
 
     return loss
 
@@ -124,21 +123,6 @@ def train_embeds(
             padding_mask=batch.make_padding_mask(),
             # to_return=["state_emb"],
         )
-
-        # state_emb = state_emb["state_emb"]
-
-        # breakpoint()
-        # gc.collect()
-        # _rehook()
-
-        # def _loss_fn(k):
-        #     return torch.einsum("bse,ce->be", latest_embeds[k], centroids[k]).mean()
-
-        # loss = [_loss_fn(k) for k in latest_embeds.keys()]
-        # loss = sum(loss)
-
-        # accelerator.backward(loss)
-        # latest_embeds = {}
 
         if (config.centroids.n_batches > 0) and (b_idx > config.centroids.n_batches):
             break

@@ -104,12 +104,14 @@ class SequentialAction(BaseInputOutput):
         # self.state_emb = ELayer(embedding_dim=embedding_dim)
         self.return_emb = nn.Linear(1, embedding_dim)
         # self.action_emb = nn.Linear(1, embedding_dim)  # action MUST be unpacked into time dim
-        self.action_emb = nn.Linear(action_dim, embedding_dim)
+        # self.action_emb = nn.Linear(action_dim, embedding_dim)
+        self.action_emb = nn.Embedding(1024 * (2 + self.action_dim), embedding_dim)
 
         # self.action_pos_emb = nn.Embedding(action_dim, embedding_dim)
 
         # output head
-        self.action_head = nn.Sequential(nn.Linear(embedding_dim, 1), nn.Tanh())
+        # self.action_head = nn.Sequential(nn.Linear(embedding_dim, 1), nn.Tanh())
+        self.action_head = nn.Sequential(nn.Linear(embedding_dim, action_dim), nn.Tanh())
         self.observation_head = nn.Sequential(nn.Linear(embedding_dim, state_dim), nn.Tanh())
 
     def forward_embed(
@@ -122,19 +124,6 @@ class SequentialAction(BaseInputOutput):
         to_return: list[str] = None,
         **kwargs,
     ):
-        bs, seq_len = states.shape[0], states.shape[1]
-        self._batch_seq_len = seq_len
-
-        self.spread_dim = 2  # (1 [ret] + 1 [state])
-
-        time_emb = self.timestep_emb(timesteps)
-
-        ret_emb = self.return_emb(returns_to_go.unsqueeze(-1))
-        state_emb = self.state_emb(states)
-
-        ret_emb += time_emb
-        state_emb += time_emb
-
         # put all actions in the time dim
         # i.e. if we are [bs, seq_len, action_dim] -> where without batch it is like:
         # |--------------timestep0--------------|--------------timestep1--------------|
@@ -146,35 +135,30 @@ class SequentialAction(BaseInputOutput):
         # [ [ts_0, ts_0, ts_0, ts_1, ts_1, ts_1, ...] ]
         # for each batch
 
-        # seq will be [bs, seq_len, (ret) 1 + (state) 1, embedding_dim]
+        bs, seq_len = states.shape[0], states.shape[1]
+        action_n_steps, action_dim = actions.shape[1], actions.shape[-1]
+        self.spread_dim = 2 + action_dim  # (1 [ret] + 1 [state])
 
-        # first stack just returns and state
-        embeds = torch.stack([ret_emb, state_emb], dim=2)
+        self._batch_seq_len = seq_len
 
-        # if here we have NO action. meaning we are likely generating a sequence of actions from env.reset()
-        if actions is not None:
-            action_n_steps, action_dim = actions.shape[1], actions.shape[-1]
+        time_emb = self.timestep_emb(timesteps)
 
-            self.spread_dim += action_dim
-            repeat_time_emb = self.timestep_emb(timesteps[:, :action_n_steps].repeat_interleave(action_dim, -1))
+        ret_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb
+        state_emb = self.state_emb(states) + time_emb
 
-            # fold the actions into the time dim
-            actions = actions.reshape(bs, -1, 1)
-            act_emb = self.action_emb(actions) + repeat_time_emb
-            act_emb = act_emb.reshape(bs, action_n_steps, action_dim, self.embedding_dim)
+        # repeat_time_emb = self.timestep_emb(timesteps[:, :action_n_steps].repeat_interleave(action_dim, -1))
+        act_emb = self.action_emb(actions).sum(dim=-2).squeeze() + time_emb
+        # breakpoint()
+        # act_emb = self.action_emb(actions) + torch.stack([time_emb for _ in range(action_dim)], dim=2)
+        # act_emb = act_emb.reshape(bs, -1, self.embedding_dim)
 
-            embeds = torch.stack([ret_emb, state_emb], dim=2)
-            embeds = torch.cat([embeds, act_emb], dim=2)
+        embeds = torch.cat([ret_emb, state_emb, act_emb], dim=1)
 
-        embeds = embeds.reshape(bs, -1, self.embedding_dim)
+        self.spread_dim = embeds.shape[1] // seq_len
 
         if padding_mask is not None:
             # padding mask comes in as [bs, seq_len] -> want [bs, unpacked_sequence_len]
-            padding_mask = torch.stack([padding_mask for _ in range(self.spread_dim)], dim=-1)
-            padding_mask = padding_mask.reshape(bs, self.spread_dim * seq_len)
-
-        # if to_return:  # TODO: remove this stupid ass idea but find way to cap vals
-        #     return _return_embeds(locals(), to_return=to_return, embeds=embeds, padding_mask=padding_mask)
+            padding_mask = torch.stack([padding_mask for _ in range(self.spread_dim)], dim=-1).reshape(bs, -1)
 
         return embeds, padding_mask
 
@@ -187,13 +171,22 @@ class SequentialAction(BaseInputOutput):
         #     return _old_forward_output_linear_action_head(self, x, *args, **kwargs)
 
         batch_size = x.shape[0]
+        seq_len = x.shape[1] // self.spread_dim
         # we want to reshape to reshape to [batch_size, seq_len, spread_dim, embedding_dim] because
         # the first value of each timestep corresponds to the state dim, regardless of how many actions
         x = self.norm(x)
         x = x.reshape(batch_size, -1, self.spread_dim, self.embedding_dim)
-        obs_out = self.observation_head(x[..., 0 :: self.spread_dim, :]).squeeze()
-        x = x[..., 1:, :]
-        return self.action_head(x), obs_out
+        # breakpoint()
+        act_logits = self.action_head(x[:, :, 2:, :])
+
+        # act_logits = self.action_head(x[..., 1:-1, :])
+        obs_logits = self.observation_head(x[..., -1, :])
+        return act_logits, obs_logits
+        # x = x.reshape(batch_size, -1, self.spread_dim, self.embedding_dim)
+        # x = x.reshape(batch_size, -1, 3, self.embedding_dim).permute(0, 2, 1, 3)
+        # obs_out = self.observation_head(x[:, 0 :: self.spread_dim, :]).squeeze()
+        # x = x[..., 1:, :]
+        # return self.action_head(x)[:, ], obs_out
 
         # batch_size = x.shape[0]
         # seq_len = x.shape[1] // self.seq_types

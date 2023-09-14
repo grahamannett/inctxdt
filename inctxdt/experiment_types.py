@@ -1,3 +1,6 @@
+import numpy as np
+import torch
+from sklearn.preprocessing import KBinsDiscretizer
 from torch.utils.data import DataLoader
 
 from inctxdt.batch import Collate
@@ -44,6 +47,12 @@ def run_baseline(config, dataset=None, dataloader=None, accelerator=None, env_sp
     train(model, dataloader=dataloader, config=config, accelerator=accelerator, env_spec=env_spec, env=env, venv=venv)
 
 
+def create_discretizer(arr, n_bins: int = 1024) -> torch.Tensor:
+    enc = KBinsDiscretizer(n_bins=n_bins, encode="ordinal", strategy="quantile")
+    enc.fit(arr)
+    return torch.from_numpy(np.stack(enc.bin_edges_))
+
+
 def run_autoregressive(config, dataset=None, dataloader=None, accelerator=None, env_spec=None, env=None, venv=None):
     assert dataset or dataloader, "either dataset or dataloader must be provided"
 
@@ -61,21 +70,15 @@ def run_autoregressive(config, dataset=None, dataloader=None, accelerator=None, 
         EmbedClass=config.embed_class,
     )
 
-    batch = next(
-        iter(
-            DataLoader(
-                dataset,
-                batch_size=config.batch_size * 4,
-                shuffle=config.shuffle,
-                num_workers=config.num_workers,
-                collate_fn=Collate(
-                    batch_first=True,
-                    device=None if accelerator else config.device,
-                    return_fn=dataset.collate_fn(batch_first=True),
-                ),
-            )
-        )
-    )
+    bin_edges = create_discretizer(arr=np.concatenate([v["actions"] for v in dataset.dataset]))
+    bin_edges = bin_edges.to(accelerator.device)
 
-    model.create_discretizer("actions", batch.actions)
+    model.set_discretizer("actions", bin_edges=bin_edges)
+
     train(model, dataloader=dataloader, config=config, accelerator=accelerator, env_spec=env_spec, env=env, venv=venv)
+
+
+    # state_iter = [torch.from_numpy(v["observations"]) for v in dataset.dataset]
+    # model.train_new_state_emb(
+    #     state_iter=state_iter, new_state_dim=17, n_clusters=1024, config=config, num_iters=10, temperature=1.0
+    # )
