@@ -42,39 +42,29 @@ class TestTransformerBlock(unittest.TestCase):
         num_heads = 1
         attention_dropout, residual_dropout = 0.1, 0.1
 
-        # query = torch.rand(32, 8, 128, 64, dtype=torch.float16, device="cuda")
-        # key = torch.rand(32, 8, 128, 64, dtype=torch.float16, device="cuda")
-        # value = torch.rand(32, 8, 128, 64, dtype=torch.float16, device="cuda")
-        # with torch.backends.cuda.sdp_kernel(enable_math=False):
-        #     out = torch.nn.functional.scaled_dot_product_attention(query, key, value)
+        class Model(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear = nn.Linear(1, 32)
+                self.block = TransformerBlock(
+                    seq_len=seq_len,
+                    embedding_dim=32,
+                    num_heads=2,
+                    attention_dropout=attention_dropout,
+                    residual_dropout=residual_dropout,
+                )
 
-        # breakpoint()
-        # class Model(nn.Module):
-        #     def __init__(self):
-        #         super().__init__()
-        #         self.linear = nn.Linear(1, 32)
-        #         self.block = TransformerBlock(
-        #             seq_len=seq_len,
-        #             embedding_dim=32,
-        #             num_heads=2,
-        #             attention_dropout=attention_dropout,
-        #             residual_dropout=residual_dropout,
-        #         )
+            def forward(self, x):
+                batch_size, seq_len, state_dim = x.shape
 
-        #     def forward(self, x):
-        #         batch_size, seq_len, state_dim = x.shape
+                x = x.unsqueeze(-1)
+                x = self.linear(x)
+                x = x.reshape(batch_size, -1, 32)
+                x = x.permute(0, 2, 1)
+                x = self.block(x)
+                return x
 
-        #         x = x.unsqueeze(-1)
-        #         x = self.linear(x)
-        #         x = x.reshape(batch_size, -1, 32)
-        #         x = x.permute(0, 2, 1)
-        #         breakpoint()
-        #         x = self.block(x)
-        #         return x
-
-        # model = Model().cuda()
-        model = ELayer(128).cuda()
-
+        model = Model().cuda()
         state_input = torch.rand(batch_size, seq_len, state_dim, device=device)
         out = model(state_input)
 

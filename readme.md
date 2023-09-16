@@ -17,6 +17,9 @@ apt related things you probably need:
 sudo apt install libosmesa6-dev libgl1-mesa-glx libglfw3 libglew-dev patchelf
 
 
+# to run the baseline
+
+`python run.py --batch_size=400 --epochs=10 --seq_len=10 --num_workers=10 --eval_episodes=10
 
 
 # to run with docker

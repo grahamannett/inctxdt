@@ -1,34 +1,9 @@
 from typing import Optional
+
 import torch
 import torch.nn as nn
 
 from inctxdt.models.model_output import ModelOutput
-
-from einops import einsum
-from einops.layers.torch import Rearrange, Reduce, EinMix
-
-
-class ELayer(nn.Module):
-    def __init__(self, embedding_dim: int, proj_dim: int = None):
-        super().__init__()
-        # proj_dim = proj_dim or embedding_dim * 2
-        # embedding_dim = 32
-        proj_dim = embedding_dim
-        proj_dim = 32
-        self.embedding_dim = embedding_dim
-        self.linear = nn.Linear(1, proj_dim)
-
-        self.attn = TransformerBlock(200, proj_dim, 1, 0.0, 0.0)
-        self.proj_out = nn.Linear(proj_dim, embedding_dim)
-
-    def forward(self, x: torch.Tensor, padding_mask: torch.Tensor = None):
-        batch_size, seq_len, type_dim = x.shape
-        x = x.reshape(batch_size, -1)[..., None]
-        x = self.linear(x)
-        x = self.attn(x)
-        x = self.proj_out(x)
-        x = torch.nn.functional.adaptive_avg_pool2d(x, (seq_len, self.embedding_dim))
-        return x
 
 
 class TransformerBlock(nn.Module):
@@ -99,13 +74,10 @@ class DecisionTransformer(nn.Module):
 
         self.out_norm = nn.LayerNorm(embedding_dim)
         # additional seq_len embeddings for padding timesteps
-        self.timestep_emb = nn.Embedding(episode_len + seq_len**2, embedding_dim)
-        # self.state_emb = nn.Linear(state_dim, embedding_dim)
-        self.state_emb = ELayer(embedding_dim=embedding_dim)
+        self.timestep_emb = nn.Embedding((episode_len + seq_len) * 2, embedding_dim)
+        self.state_emb = nn.Linear(state_dim, embedding_dim)
         self.action_emb = nn.Linear(action_dim, embedding_dim)
         self.return_emb = nn.Linear(1, embedding_dim)
-
-        # self.stack_embs = Rearrange("t b s e -> b (s t) e")
 
         self.blocks = nn.ModuleList(
             [
@@ -153,7 +125,7 @@ class DecisionTransformer(nn.Module):
         # [batch_size, seq_len, emb_dim]
 
         time_emb = self.timestep_emb(timesteps)
-        state_emb = self.state_emb(states, padding_mask=padding_mask) + time_emb
+        state_emb = self.state_emb(states) + time_emb
         act_emb = self.action_emb(actions) + time_emb
         returns_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb
 
@@ -184,10 +156,7 @@ class DecisionTransformer(nn.Module):
         # [batch_size, seq_len, action_dim]
         # predict actions only from state embeddings
         out = self.action_head(out[:, 1::3]) * self.max_action
-        # return out
-
         return ModelOutput(logits=out, only_logits=self.only_logits)
-        # return out
 
 
 # https://github.com/pytorch/examples/blob/main/distributed/minGPT-ddp/mingpt/model.py

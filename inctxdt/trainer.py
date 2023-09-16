@@ -49,7 +49,7 @@ def _secondary_loss(
     return loss
 
 
-def get_loss(model_output: ModelOutput, batch: Batch) -> torch.Tensor:
+def get_loss(model_output: ModelOutput, batch: Batch, config: Config = None) -> torch.Tensor:
     target, mask, pred = batch.actions, batch.mask, model_output.logits
 
     if pred.shape != target.shape:
@@ -61,77 +61,15 @@ def get_loss(model_output: ModelOutput, batch: Batch) -> torch.Tensor:
     loss = nn.functional.mse_loss(pred, target, reduction="none")
     loss = (loss * mask.unsqueeze(-1)).mean()
 
-    # if model_output.extra is not None:
-    #     loss += _secondary_loss(model_output.extra["obs_logits"], batch.states, mask, scale_factor=0.1)
-
-    return loss
-
-
-def train_embeds(
-    config: Config,
-    model: nn.Module,
-    capture_layers: list[nn.Module],
-    dataloader: torch.utils.data.DataLoader,
-    accelerator: Accelerator,
-):
-    device = accelerator.device
-    latest_embeds = {}
-    centroids = {}
-    to_hook = {}
-
-    modules_ = {}
-
-    optim, sched = default_optimizer(model, config)
-
-    def _fn(module, input, output):
-        # if module._name in latest_embeds and latest_embeds[module._name] is not None:
-        #     latest_embeds[module._name] = latest_embeds[module._name].detach().cpu()
-
-        latest_embeds[module._name] = output
-
-    def _rehook():
-        for k, v in to_hook.items():
-            v.remove()
-            to_hook[k] = modules_[k].register_forward_hook(_fn)
-
-    # for mod_name, mod in model.named_modules():
-    #     if mod_name in capture_layers:
-    #         mod._name = mod_name
-    #         centroids[mod_name] = mod.weight.detach().clone()
-    #         # to_hook[mod_name] = mod.register_forward_hook(_fn)
-    #         # modules_[mod_name] = mod
-
-    # for mod_name, weight in centroids.items():
-    #     kmeans = KMeans(n_clusters=config.centroids.n_clusters, mode=config.centroids.mode, verbose=1)
-    #     _ = kmeans.fit_predict(weight.T)
-    #     centroids[mod_name] = kmeans.centroids
-    # cluster_info[weight_name] = kmeans
-
-    model.train()
-
-    # model, dl, optim, sched = accelerator.prepare(model, dataloader, optim, sched)
-
-    for b_idx, batch in enumerate(dataloader):
-        batch = batch.to(device)
-        # _, _, state_emb = model.embed_output_layers.forward_embed(
-
-        out = model(
-            states=batch.states,
-            actions=batch.actions,
-            returns_to_go=batch.returns_to_go,
-            timesteps=batch.timesteps,
-            padding_mask=batch.make_padding_mask(),
-            # to_return=["state_emb"],
+    if getattr(config, "use_secondary_loss", False):
+        loss += _secondary_loss(
+            model_output.extra["obs_logits"],
+            batch.states,
+            mask,
+            scale_factor=getattr(config, "secondary_loss_scale", 1.0),
         )
 
-        if (config.centroids.n_batches > 0) and (b_idx > config.centroids.n_batches):
-            break
-
-    breakpoint()
-    return model
-    # for key, embeds in latest_embeds.items():
-    #     arr = torch.einsum("bse,ce->be", embeds, centroids[key])
-    #     breakpoint()
+    return loss
 
 
 def train(
@@ -146,6 +84,7 @@ def train(
     venv: gymnasium.vector.SyncVectorEnv = None,
 ):
     _main_proc = accelerator.is_local_main_process
+    eval_rollout_fn = getattr(config, "eval_func", venv_eval_rollout)
 
     if (optimizer is None) or (scheduler is None):
         optimizer, scheduler = default_optimizer(model, config)
@@ -222,7 +161,7 @@ def train(
             if (batch_idx % config.log.log_every) == 0:
                 _log(loss=loss.item())
 
-        eval_ret, _ = venv_eval_rollout(
+        eval_ret, _ = eval_rollout_fn(
             model,
             venv,
             env_spec,

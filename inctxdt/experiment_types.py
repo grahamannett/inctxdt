@@ -47,7 +47,7 @@ def run_baseline(config, dataset=None, dataloader=None, accelerator=None, env_sp
     train(model, dataloader=dataloader, config=config, accelerator=accelerator, env_spec=env_spec, env=env, venv=venv)
 
 
-def create_discretizer(arr, n_bins: int = 1024) -> torch.Tensor:
+def create_discretizer(arr: np.ndarray, n_bins: int = 4024) -> torch.Tensor:
     enc = KBinsDiscretizer(n_bins=n_bins, encode="ordinal", strategy="quantile")
     enc.fit(arr)
     return torch.from_numpy(np.stack(enc.bin_edges_))
@@ -78,7 +78,3 @@ def run_autoregressive(config, dataset=None, dataloader=None, accelerator=None, 
     train(model, dataloader=dataloader, config=config, accelerator=accelerator, env_spec=env_spec, env=env, venv=venv)
 
 
-    # state_iter = [torch.from_numpy(v["observations"]) for v in dataset.dataset]
-    # model.train_new_state_emb(
-    #     state_iter=state_iter, new_state_dim=17, n_clusters=1024, config=config, num_iters=10, temperature=1.0
-    # )

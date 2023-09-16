@@ -48,6 +48,7 @@ class TransformerBlock(nn.Module):
 
     def forward(self, x: torch.Tensor, padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         # causal_mask = self.causal_mask[: x.shape[1], : x.shape[1]]
+
         causal_mask = self.get_casual_mask(x)
 
         norm_x = self.norm1(x)
@@ -173,7 +174,7 @@ class DecisionTransformer(nn.Module):
     ) -> torch.FloatTensor:
         # if actions is not None:
         #     actions = self.encode(actions, "actions")
-        actions = self.encode("actions", actions)
+        # actions = self.encode("actions", actions)
 
         sequence, padding_mask = self.forward_embed(
             states=states,
@@ -207,6 +208,13 @@ class DecisionTransformer(nn.Module):
         config=None,
         num_iters=10,
     ):
+        """
+        use like:
+            state_iter = [torch.from_numpy(v["observations"]) for v in dataset.dataset]
+            model.train_new_state_emb(
+                state_iter=state_iter, new_state_dim=17, n_clusters=1024, config=config, num_iters=10, temperature=1.0
+            )
+        """
         self._prev_state_emb = self.embed_output_layers.state_emb
         _prev_weights = self._prev_state_emb.weight.detach().clone()
         new_state_emb = nn.Linear(new_state_dim, self.embedding_dim).to(device)
