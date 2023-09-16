@@ -5,8 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from fast_pytorch_kmeans import KMeans
 
-
-from inctxdt.config import EnvSpec
+from inctxdt.config import EnvSpec, ModalEmbedConfig
 from inctxdt.models import layers
 from inctxdt.models.model_output import ModelOutput
 
@@ -84,16 +83,16 @@ class DecisionTransformer(nn.Module):
         embedding_dropout: float = 0.0,
         max_action: float = 1.0,
         env_spec: Optional["EnvSpec"] = None,
-        EmbedClass: Optional[str] = "SequentialAction",
+        modal_embed: ModalEmbedConfig = None,
         **kwargs,
     ):
         super().__init__()
         self.emb_drop = nn.Dropout(embedding_dropout)
         self.emb_norm = nn.LayerNorm(embedding_dim)
 
+        # try to get from env_spec as that is the most reliable/likely
         state_dim = getattr(env_spec, "state_dim", state_dim)
         action_dim = getattr(env_spec, "action_dim", action_dim)
-        # self.state_embed_dict = nn.ModuleDict({})
 
         self.blocks = nn.ModuleList(
             [
@@ -107,9 +106,11 @@ class DecisionTransformer(nn.Module):
                 for _ in range(num_layers)
             ]
         )
-
-        EmbedClass = getattr(layers, EmbedClass)  # layers.SequentialAction  #  StackedEnvEmbedding
+        self.modal_embed_config = modal_embed or ModalEmbedConfig(embedding_dim=embedding_dim)
+        #  Layers are things like - SequentialAction  - StackedEnvEmbedding
+        EmbedClass = getattr(layers, self.modal_embed_config.EmbedClass)
         self.embed_output_layers = EmbedClass(
+            modal_embed_config=self.modal_embed_config,
             embedding_dim=embedding_dim,
             episode_len=episode_len,
             seq_len=seq_len,
@@ -117,8 +118,6 @@ class DecisionTransformer(nn.Module):
             action_dim=action_dim,
         )
         self.embed_output_layers.patch_parent(parent=self)
-
-        # self.embed_output_layers = DynamicLayers(env_spec=env_spec, embedding_dim=embedding_dim)
 
         self.seq_len = seq_len
         self.embedding_dim = embedding_dim
@@ -140,12 +139,11 @@ class DecisionTransformer(nn.Module):
         self.discretizers[type_name] = hist
 
     def encode(self, type_name: str, x: torch.Tensor, dtype: torch.dtype = torch.long):
+        bin_edges = self.discretizers[type_name]
+        x = x.contiguous()
         xt = torch.zeros_like(x, dtype=dtype, device=x.device)
-        offset_bin_edge = 0
         for jj in range(x.shape[-1]):
-            bin_edges = self.discretizers[type_name][jj]
-            xt[..., jj] = torch.searchsorted(bin_edges[1:-1], x[..., jj], side="right")
-            xt[..., jj] += jj * len(bin_edges)
+            xt[..., jj] = torch.searchsorted(bin_edges[jj, 1:-1], x[..., jj], side="right") + (jj * len(bin_edges))
 
         return xt
 
@@ -172,9 +170,8 @@ class DecisionTransformer(nn.Module):
         padding_mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
         **kwargs,
     ) -> torch.FloatTensor:
-        # if actions is not None:
-        #     actions = self.encode(actions, "actions")
-        # actions = self.encode("actions", actions)
+        if self.modal_embed_config.tokenize_action:
+            actions = self.encode("actions", actions)
 
         sequence, padding_mask = self.forward_embed(
             states=states,

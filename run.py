@@ -1,15 +1,13 @@
 import pyrallis
 import torch
-from accelerate import Accelerator
-
 import wandb
-
+from accelerate import Accelerator
 
 from inctxdt.config import Config, EnvSpec
 from inctxdt.d4rl_datasets import D4rlAcrossEpisodeDataset, D4rlDataset, D4rlMultipleDataset
-from inctxdt.minari_datasets import AcrossEpisodeDataset, MinariDataset, MultipleMinariDataset
 from inctxdt.env_helper import get_env
 from inctxdt.experiment_types import run_autoregressive, run_baseline
+from inctxdt.minari_datasets import AcrossEpisodeDataset, MinariDataset, MultipleMinariDataset
 
 dispatch_dataset = {
     "minari": MinariDataset,

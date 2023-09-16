@@ -1,94 +1,58 @@
 from typing import List, Tuple
+
 import torch
 import torch.nn as nn
 
-...
-from inctxdt.config import EnvSpec
 
-from inctxdt.models.layers.base_layers import OriginalEnvEmbedding, OriginalActionHead, BaseInputOutput
-from einops.layers.torch import Rearrange, Reduce
+from inctxdt.config import EnvSpec, ModalEmbedConfig
+from inctxdt.models.layers.base_layers import BaseInputOutput, OriginalActionHead, OriginalEnvEmbedding
+from inctxdt.models.layers.conv_embed_layers import ConvActionDimHead
 
 
 def _return_embeds(locs, to_return, embeds, padding_mask):
     return embeds, padding_mask, {k: locs[k] for k in to_return}
 
 
-class ELayer(nn.Module):
-    def __init__(self, embedding_dim: int, proj_dim: int = None):
-        super().__init__()
-        proj_dim = proj_dim or embedding_dim * 2
-        self.linear = nn.Linear(1, proj_dim)
-        self.norm = nn.LayerNorm(proj_dim)
-        self.proj_out = nn.Parameter(torch.rand(proj_dim, embedding_dim))
-
-    def forward(self, x: torch.Tensor):
-        x = x.unsqueeze(-1)
-        x = self.linear(x)
-        x = self.norm(x)
-        # [batch, seq, obs_dim, proj_dim] x [proj_dim, proj_dim] -> [batch, seq, proj_dim]
-        x = torch.einsum("bsop,ed->bsd", x, self.proj_out)
-        return x
+class BaseModalEmbedding(nn.Module):
+    def _add_time_emb(self, time_emb: torch.Tensor) -> torch.Tensor:
+        return time_emb
 
 
-class ConvActionDimHead(nn.Module):
-    def __init__(
-        self,
-        embedding_dim: int,
-        action_dim: int,
-        stack_idxs: List[int] = [0, 1],
-        kernel_size: int = (1, 2),
-        seq_types: int = 3,
-    ):
-        assert len(stack_idxs) == kernel_size[-1], "we can only stack as many as we can convolve"
-
-        super().__init__()
-        self.embedding_dim = embedding_dim
-        self.action_dim = action_dim
-        self.stack_idxs = stack_idxs
-        self.seq_types = seq_types  # i.e. returns, states, actions
-
-        self.norm = nn.LayerNorm(embedding_dim)
-        self.conv = nn.Conv2d(embedding_dim, action_dim, kernel_size=kernel_size)
-        self.activation = nn.Tanh()
-
-    def forward(self, x: torch.Tensor, **kwargs):
-        batch_size, seq_len = x.shape[0], x.shape[1] // self.seq_types
-
-        # go from [batch_size, seq_len * seq_types, emb_dim] -> [batch_size, seq_types, seq_len, emb_dim]
-        x = x.reshape(batch_size, seq_len, self.seq_types, self.embedding_dim).permute(0, 2, 1, 3)
-        x_postnorm = self.norm(x)
-
-        # stack along this dim realistically we probably dont need this but its confusing otherwise
-        # [batch_size, len(stack_idxs), ]
-        x_postnorm = torch.stack([x_postnorm[:, i] for i in self.stack_idxs], dim=1)
-
-        # to [batch_size, emb_dim, seq_len, len(stack_idxs)] - treat emb is the channel layer
-        x_postnorm = x_postnorm.permute(0, 3, 2, 1)
-        x_postnorm = self.conv(x_postnorm)
-        x_postnorm = x_postnorm.squeeze(-1).permute(0, 2, 1)  # put back to [batch_size, seq_len, act_dim]
-
-        return self.activation(x_postnorm)
-
-        # return self.activation(x_postnorm).reshape(batch_size, -1)  # flatten to [batch_size, seq_len * act_dim]
-
-
-class ActionEmbedding(nn.Module):
-    def __init__(self, action_dim: int, embedding_dim: int):
+class ActionEmbedding(BaseModalEmbedding):
+    def __init__(self, action_dim: int, embedding_dim: int, *args, **kwargs):
         super().__init__()
         self.action_dim = action_dim
         self.embedding_dim = embedding_dim
         self.action_emb = nn.Linear(action_dim, embedding_dim)
 
-    def forward(self, x: torch.Tensor, time_emb: torch.Tensor) -> torch.Tensor:
-        return self.action_emb(x) + time_emb
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.action_emb(x)
 
 
-class ActionSpreadEmbedding(nn.Module):
-    def __init__(self, embedding_dim: int):
+class ActionSpreadEmbedding(BaseModalEmbedding):
+    """
+    action comes in as: [bs, seq_len, action_dim] -> [bs, seq_len * action_dim, 1],
+    after embedding is:
+        [bs, seq_len * action_dim, emb_dim]
+
+    while timesteps are [bs, seq_len] -> [bs, seq_len, emb_dim]
+    means we need to repeat the time emb for each action such that it is [bs, seq_len * action_dim, emb_dim]
+
+    to check this you can verify by:
+        reshape the timestep emb from [bs, seq_len * action_dim, emb_dim] -> [bs, seq_len, action_dim, emb_dim]
+        then check that [:, 0, 0, :] == [:, 0, 1, :] == [:, 0, 2, :] etc
+    """
+
+    def __init__(self, action_dim: int, embedding_dim: int, *args, **kwargs):
         super().__init__()
+        self.action_dim = action_dim
         self.embedding_dim = embedding_dim
         self.action_emb = nn.Linear(1, embedding_dim)
         self.action_pos_emb = nn.Parameter(torch.rand(embedding_dim, embedding_dim))
+
+    def _add_time_emb(self, time_emb: torch.Tensor) -> torch.Tensor:
+        # time emb coming in will be [bs, seq_len, emb_dim]
+        return super()._add_time_emb(time_emb.repeat_interleave(self.action_dim, dim=1))
 
     def forward(self, x: torch.Tensor, time_emb: torch.Tensor) -> torch.Tensor:
         # put all actions in the time dim
@@ -108,23 +72,31 @@ class ActionSpreadEmbedding(nn.Module):
         #       repeat_time_emb = self.timestep_emb(timesteps[:, :action_n_steps].repeat_interleave(action_dim, -1))
         #   or
         #       act_emb = self.action_emb(actions) + torch.stack([time_emb for _ in range(action_dim)], dim=2)
-        action_dim = x.shape[-1]
+        self.action_n_steps, self.action_dim = x.shape[1], x.shape[-1]
         x = self.action_emb(x)
         x = torch.einsum("bsed,ed->bsd", x, self.action_pos_emb)
         # act_emb = act_emb.reshape(bs, -1, self.embedding_dim)
         return x
 
 
-class ActionTokenizedEmbedding(nn.Module):
-    def __init__(self, embedding_dim: int, num_action_tokens: int = 8192, pool_fn: str = torch.sum, **kwargs):
+class ActionTokenizedEmbedding(BaseModalEmbedding):
+    def __init__(self, embedding_dim: int, token_size: int, pool_fn: str = torch.sum, **kwargs):
         super().__init__()
+        self.token_size = token_size
         self.embedding_dim = embedding_dim
-        self.action_emb = nn.Embedding(num_action_tokens, embedding_dim)
+        self.action_emb = nn.Embedding(token_size, embedding_dim)
         self.pool_fn = pool_fn
 
-    def forward(self, x: torch.Tensor, time_emb: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         x = self.action_emb(x)
-        return self.pool_fn(x, dim=-2).squeeze() + time_emb
+        return self.pool_fn(x, dim=-2).squeeze()
+
+
+ModalEmbCls = {
+    "ActionEmbedding": ActionEmbedding,
+    "ActionSpreadEmbedding": ActionSpreadEmbedding,
+    "ActionTokenizedEmbedding": ActionTokenizedEmbedding,
+}
 
 
 class SequentialAction(BaseInputOutput):
@@ -133,6 +105,7 @@ class SequentialAction(BaseInputOutput):
 
     def __init__(
         self,
+        modal_embed_config: ModalEmbedConfig,
         embedding_dim: int,
         episode_len: int,
         seq_len: int,
@@ -141,34 +114,32 @@ class SequentialAction(BaseInputOutput):
         **kwargs,
     ):
         super().__init__()
+        self.modal_embed_config = modal_embed_config
         self.embedding_dim = embedding_dim
         self.action_dim = action_dim
         self.seq_types = 1 + 1 + action_dim  # i.e. returns, states, actions
-
-        self.norm = nn.LayerNorm(embedding_dim)
-        # self.conv = nn.Conv2d(embedding_dim, action_dim, kernel_size=kernel_size)
 
         self.episode_len = episode_len
         self.seq_len = seq_len
         self.state_dim = state_dim
         self.action_dim = action_dim
-        self.embedding_dim = embedding_dim
+
+        self.norm = nn.LayerNorm(self.embedding_dim)
+        # self.conv = nn.Conv2d(embedding_dim, action_dim, kernel_size=kernel_size)
 
         # self.timestep_emb = nn.Embedding(episode_len + seq_len, embedding_dim)
-        self.timestep_emb = nn.Embedding(episode_len, embedding_dim)
-        self.state_emb = nn.Linear(state_dim, embedding_dim)
+        self.timestep_emb = nn.Embedding(episode_len, self.embedding_dim)
+        self.state_emb = nn.Linear(state_dim, self.embedding_dim)
 
-        self.return_emb = nn.Linear(1, embedding_dim)
-        self.action_emb = ActionEmbedding(action_dim=action_dim, embedding_dim=embedding_dim)
-        # self.action_emb = nn.Linear(1, embedding_dim)  # action MUST be unpacked into time dim
-        # self.action_pos_emb = nn.Embedding(action_dim, embedding_dim)
-        # self.action_emb = nn.Linear(action_dim, embedding_dim)
-        # self.action_emb = nn.Embedding(1024 * (2 + self.action_dim), embedding_dim)
+        self.return_emb = nn.Linear(1, self.embedding_dim)
+
+        ActEmb = ModalEmbCls[self.modal_embed_config.action_embed_class]
+
+        self.action_emb = ActEmb(action_dim=action_dim, embedding_dim=self.embedding_dim, **modal_embed_config.__dict__)
 
         # output head
-        # self.action_head = nn.Sequential(nn.Linear(embedding_dim, 1), nn.Tanh())
-        self.action_head = nn.Sequential(nn.Linear(embedding_dim, action_dim), nn.Tanh())
-        self.observation_head = nn.Sequential(nn.Linear(embedding_dim, state_dim), nn.Tanh())
+        self.action_head = nn.Sequential(nn.Linear(self.embedding_dim, action_dim), nn.Tanh())
+        self.observation_head = nn.Sequential(nn.Linear(self.embedding_dim, state_dim), nn.Tanh())
 
     def forward_embed(
         self,
@@ -181,8 +152,6 @@ class SequentialAction(BaseInputOutput):
         **kwargs,
     ):
         bs, seq_len = states.shape[0], states.shape[1]
-        action_n_steps, action_dim = actions.shape[1], actions.shape[-1]
-
         self._batch_seq_len = seq_len
 
         time_emb = self.timestep_emb(timesteps)
@@ -190,10 +159,10 @@ class SequentialAction(BaseInputOutput):
         ret_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb
         state_emb = self.state_emb(states) + time_emb
 
-        # act_emb = self.action_emb(actions).sum(dim=-2).squeeze() + time_emb
-        # act_emb = self.action_emb(actions) + time_emb
-        act_emb = self.action_emb(actions, time_emb)
+        # since we are flattening the actions for some embeddings, we need to repeat the time embedding for each action in some cases
+        act_emb = self.action_emb(actions) + self.action_emb._add_time_emb(time_emb)
 
+        # stack embeddings so that we have [bs, seq_len * spread_dim, embedding_dim]
         embeds = torch.cat([ret_emb, state_emb, act_emb], dim=1)
         self.spread_dim = embeds.shape[1] // seq_len
 
@@ -211,11 +180,11 @@ class SequentialAction(BaseInputOutput):
         # if x is not None:
         #     return _old_forward_output_linear_action_head(self, x, *args, **kwargs)
 
-        batch_size = x.shape[0]
-        # we want to reshape to reshape to [batch_size, seq_len, spread_dim, embedding_dim] because
+        bs = x.shape[0]
+        # we want to reshape to reshape to [bs, seq_len, spread_dim, embedding_dim] because
         # the first value of each timestep corresponds to the state dim, regardless of how many actions
         x = self.norm(x)
-        x = x.reshape(batch_size, self._batch_seq_len, -1, self.embedding_dim)
+        x = x.reshape(bs, self._batch_seq_len, -1, self.embedding_dim)
 
         # 1 refers to state -> predict action
         act_logits = self.action_head(x[:, :, 1, :])
@@ -225,8 +194,6 @@ class SequentialAction(BaseInputOutput):
 
 
 # KEEP THESE FOR POSTERITY UNTIL CERTAIN ITS WORKING
-
-
 def _old_forward_output_linear_action_head(self, x: torch.Tensor, *args, **kwargs):
     batch_size = x.shape[0]
     x = x.reshape(batch_size, -1, self.seq_types, self.embedding_dim)

@@ -12,26 +12,22 @@ action_dim = 6
 seq_len = 30
 device = "cuda"
 
+
 # Optionally use the context manager to ensure one of the fused kerenels is run
-
-
 class ELayer(nn.Module):
-    def __init__(self, embedding_dim: int):
+    def __init__(self, embedding_dim: int, proj_dim: int = None):
         super().__init__()
-        # self.dropout = nn.Dropout(0.1)
-        self.linear = nn.Linear(1, embedding_dim)
-        self.norm = nn.LayerNorm(embedding_dim)
-        self.proj_out = nn.Parameter(torch.rand(embedding_dim, embedding_dim))
+        proj_dim = proj_dim or embedding_dim * 2
+        self.linear = nn.Linear(1, proj_dim)
+        self.norm = nn.LayerNorm(proj_dim)
+        self.proj_out = nn.Parameter(torch.rand(proj_dim, embedding_dim))
 
     def forward(self, x: torch.Tensor):
         x = x.unsqueeze(-1)
         x = self.linear(x)
-        # x = self.dropout(x)
         x = self.norm(x)
-
         # [batch, seq, obs_dim, proj_dim] x [proj_dim, proj_dim] -> [batch, seq, proj_dim]
         x = torch.einsum("bsop,ed->bsd", x, self.proj_out)
-        breakpoint()
         return x
 
 

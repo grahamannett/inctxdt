@@ -1,8 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Union
 
-from pyrallis import dump
-
 
 @dataclass
 class EnvSpec:
@@ -57,6 +55,14 @@ class LogConfig:
 
 
 @dataclass
+class ModalEmbedConfig:
+    tokenize_action: bool = False
+    num_bins: int = 4096
+    EmbedClass: str = "SequentialAction"
+    action_embed_class: str = "ActionEmbedding"
+
+
+@dataclass
 class Config:
     # dataset_name: str = "pointmaze-umaze-v1"
     # dataset_type: str = "minari"
@@ -84,11 +90,11 @@ class Config:
     num_layers: int = 4
     num_heads: int = 4
     embedding_dim: int = 256
-    embed_class: str = "SequentialAction"
 
     adist: bool = False  # accelerate distributed
     dist: bool = False  # pytorch distributed
 
+    modal_embed: ModalEmbedConfig = field(default_factory=ModalEmbedConfig)
     log: LogConfig = field(default_factory=LogConfig)
     centroids: CentroidConfig = field(default_factory=CentroidConfig)
 
@@ -130,6 +136,8 @@ class Config:
 
     @property
     def console_info(self) -> str:
+        from pyrallis import dump
+
         return dump(self)
 
     @classmethod
