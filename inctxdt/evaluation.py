@@ -99,7 +99,7 @@ def venv_eval_rollout(
     target_return: float,
     output_sequential: bool = False,
     prior_episode: EpisodeData = None,
-) -> Tuple[float, float]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     assert isinstance(venv, (gymnasium.vector.VectorEnv, VectorEnv)), "venv must be a vectorized env."
 
     model.eval()
@@ -135,7 +135,7 @@ def venv_eval_rollout(
 
     # float64 b/c rewards come back as float64 and faster to not convert every time
     venv_episode_return = torch.zeros(num_envs, dtype=torch.float64)
-    venv_episode_len = torch.zeros(num_envs, dtype=torch.int)
+    venv_episode_len = torch.ones(num_envs, dtype=torch.int)  # account for last step
     dones = torch.zeros(num_envs, dtype=torch.bool)
 
     # output sequential when actions are needed sequentially, i.e. for autoregressive models with single action output
@@ -148,32 +148,38 @@ def venv_eval_rollout(
                 timesteps=timesteps[~dones, : step + 1][:, -seq_len:],
             )
 
+            logits = act_i_output.logits.reshape(len(actions), -1, env_spec.action_dim)
+
             # output logits will increase until we hit seq len, so just take last values along dim 1
-            actions[:, step, act_i] = act_i_output.logits[:, -1, act_i]
+            actions[:, step, act_i] = logits[:, -1, act_i]
         return actions[:, : step + 1, :]
+
+    def _handle_step_dones(step_dones: Tuple[np.ndarray] | Tuple[np.ndarray, np.ndarray]) -> np.ndarray:
+        if len(step_dones) == 2:
+            term, trunc = step_dones
+            return term | trunc
+
+        return step_dones[0]
 
     for step in trange(max_episode_len, desc="Eval Rollout"):
         if output_sequential:
             logits = _output_sequential(step, states, actions, returns, timesteps, dones)
         else:
             logits = model(
-                states=states[~dones, : step + 1][:, -seq_len:],
-                actions=actions[~dones, : step + 1][:, -seq_len:],
-                returns_to_go=returns[~dones, : step + 1][:, -seq_len:],
-                timesteps=timesteps[~dones, : step + 1][:, -seq_len:],
+                states=states[:, : step + 1][:, -seq_len:],
+                actions=actions[:, : step + 1][:, -seq_len:],
+                returns_to_go=returns[:, : step + 1][:, -seq_len:],
+                timesteps=timesteps[:, : step + 1][:, -seq_len:],
             ).logits
 
-        predicted_action = logits.reshape(num_envs, -1)
-        predicted_action = predicted_action[~dones, -env_spec.action_dim :].squeeze()
+        predicted_action = logits.reshape(num_envs, -1, env_spec.action_dim)
+        predicted_action = predicted_action[:, -1].squeeze()
 
         # unpack
-        next_state, rew, *step_dones, info = venv.step(predicted_action.cpu().numpy())
+        # breakpoint()
 
-        if len(step_dones) == 2:
-            terminated, truncated = step_dones
-            step_dones = terminated | truncated
-        else:
-            step_dones = step_dones[0]
+        next_state, rew, *step_dones, info = venv.step(predicted_action.cpu().numpy())
+        step_dones = _handle_step_dones(step_dones)
 
         dones[step_dones] = True
 
@@ -183,20 +189,17 @@ def venv_eval_rollout(
         next_state = torch.as_tensor(next_state, device=device, dtype=torch.float)
         rew = torch.as_tensor(rew, dtype=torch.float, device=device)
 
-        # at step t, we predict a_t, get s_{t + 1}, r_{t + 1}
-        actions[~dones, step] = predicted_action.view(num_envs, -1)[~dones]
-        states[~dones, step + 1] = next_state[~dones]
-        returns[~dones, step + 1] = returns[~dones, step] - rew[~dones]
-        # breakpoint()
-        # actions[~dones, step] = torch.as_tensor(predicted_action[~dones], device=device)
-        # states[~dones, step + 1] = torch.as_tensor(next_state[~dones], device=device, dtype=torch.float)
-        # returns[~dones, step + 1] = returns[~dones, step] - torch.as_tensor(rew[~dones], dtype=torch.float).to(device)
+        # mask where dones are true, i.e. 0 out actions and states
+        dones_mask = (~dones.unsqueeze(-1)).to(device)
+        actions[:, step] = predicted_action.view(num_envs, -1) * dones_mask
+        states[:, step + 1] = next_state * dones_mask
 
-        venv_episode_return[~dones] += rew[~dones].to(venv_episode_return.device)
+        # these need to be 1D masks, not 2D like actions/states
+        returns[:, step + 1] = (returns[:, step] - rew) * dones_mask.squeeze()
+        venv_episode_return += (rew * dones_mask.squeeze()).to(venv_episode_return.device)
         venv_episode_len += ~dones  # or (~dones).to(int)
 
         if (dones == True).all():
-            venv_episode_len += 1  # account for last step
             break
 
     return venv_episode_return, venv_episode_len

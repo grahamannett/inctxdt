@@ -57,6 +57,7 @@ def make_dataset_from_config(config: Config, dataset_name: str = None):
         seq_len=config.seq_len,
         reward_scale=config.reward_scale,
         max_num_episodes=config.max_num_episodes,
+        min_length=config.dataset_min_length,
     )
 
     return dataset
@@ -66,7 +67,7 @@ def main():
     config = pyrallis.parse(config_class=Config)
     torch.cuda.manual_seed(config.seed)
     torch.manual_seed(config.seed)
-    # breakpoint()
+
     dataset = make_dataset_from_config(config)
 
     _, env, venv, obs_space, act_space = get_env(config=config, dataset=dataset)

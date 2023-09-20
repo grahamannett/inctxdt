@@ -30,14 +30,15 @@ from tqdm.auto import tqdm, trange  # noqa
 @dataclass
 class TrainConfig:
     # wandb params
-    project: str = "CORL"
-    group: str = "DT-D4RL"
-    name: str = "DT"
+    project: str = "inctxdt"
+    group: str = "baseline"
+    mode: str = "disabled"
+    name: str = "DT-CORL-baseline"
     # model params
     embedding_dim: int = 128
-    num_layers: int = 3
-    num_heads: int = 1
-    seq_len: int = 20
+    num_layers: int = 4  # was 3
+    num_heads: int = 4  # was 1
+    seq_len: int = 10  # was 20
     episode_len: int = 1000
     attention_dropout: float = 0.1
     residual_dropout: float = 0.1
@@ -49,15 +50,17 @@ class TrainConfig:
     betas: Tuple[float, float] = (0.9, 0.999)
     weight_decay: float = 1e-4
     clip_grad: Optional[float] = 0.25
-    batch_size: int = 64
-    update_steps: int = 100_000
+    batch_size: int = 128
+    update_steps: int = 150_000
     warmup_steps: int = 10_000
     reward_scale: float = 0.001
     num_workers: int = 4
     # evaluation params
-    target_returns: Tuple[float, ...] = (12000.0, 6000.0)
+    # target_returns: Tuple[float, ...] = (12000.0, 6000.0)
+    target_returns = [12000.0]
     eval_episodes: int = 4  # was 100
-    eval_every: int = 10_00  # was 10_000
+    eval_every: int = 7500  # was 10_000
+    log_every: int = 100  # was none
     # general params
     checkpoints_path: Optional[str] = None
     deterministic_torch: bool = False
@@ -84,15 +87,15 @@ def set_seed(seed: int, env: Optional[gym.Env] = None, deterministic_torch: bool
 
 
 def wandb_init(config: dict) -> None:
-    pass
-    # wandb.init(
-    #     config=config,
-    #     project=config["project"],
-    #     group=config["group"],
-    #     name=config["name"],
-    #     id=str(uuid.uuid4()),
-    # )
-    # wandb.run.save()
+    wandb.init(
+        config=config,
+        project=config["project"],
+        mode=config["mode"],
+        group=config["group"],
+        name=config["name"],
+        id=str(uuid.uuid4()),
+    )
+    wandb.run.save()
 
 
 def wrap_env(
@@ -477,21 +480,19 @@ def train(config: TrainConfig):
         optim.step()
         scheduler.step()
 
-        # wandb.log(
-        #     {
-        #         "train_loss": loss.item(),
-        #         "learning_rate": scheduler.get_last_lr()[0],
-        #     },
-        #     step=step,
-        # )
+        if (step % config.log_every) == 0:
+            wandb.log({"loss": loss.item()})
+
 
         # validation in the env for the actual online performance
         if step % config.eval_every == 0 or step == config.update_steps - 1:
             model.eval()
+            _all_returns = []
+            _all_normalized_scores = []
             for target_return in config.target_returns:
                 eval_env.seed(config.eval_seed)
                 eval_returns = []
-                for _ in trange(config.eval_episodes, desc="Evaluation", leave=False):
+                for _ in trange(config.eval_episodes, desc="Evaluation"):
                     eval_return, eval_len = eval_rollout(
                         model=model,
                         env=eval_env,
@@ -502,24 +503,24 @@ def train(config: TrainConfig):
                     eval_returns.append(eval_return / config.reward_scale)
 
                 normalized_scores = eval_env.get_normalized_score(np.array(eval_returns)) * 100
-                # wandb.log(
-                #     {
-                #         f"eval/{target_return}_return_mean": np.mean(eval_returns),
-                #         f"eval/{target_return}_return_std": np.std(eval_returns),
-                #         f"eval/{target_return}_normalized_score_mean": np.mean(normalized_scores),
-                #         f"eval/{target_return}_normalized_score_std": np.std(normalized_scores),
-                #     },
-                #     step=step,
-                # )
-                print(f"==>Eval:{eval_returns}")  # f"eval/{returns}": eval_returns,
-                print(
-                    {
-                        f"eval/{target_return}_return_mean": np.mean(eval_returns),
-                        f"eval/{target_return}_return_std": np.std(eval_returns),
-                        f"eval/{target_return}_normalized_score_mean": np.mean(normalized_scores),
-                        f"eval/{target_return}_normalized_score_std": np.std(normalized_scores),
-                    },
-                )
+
+                _all_returns.append(np.mean(eval_returns))
+                _all_normalized_scores.append(np.mean(normalized_scores))
+
+            wandb.log({"returns": np.mean(_all_returns), "norm_score": np.mean(_all_normalized_scores)})
+            # wandb.log(
+            #     {
+            #         f"eval/{target_return}_return_mean": np.mean(eval_returns),
+            #         f"eval/{target_return}_return_std": np.std(eval_returns),
+            #         f"eval/{target_return}_normalized_score_mean": np.mean(normalized_scores),
+            #         f"eval/{target_return}_normalized_score_std": np.std(normalized_scores),
+            #     },
+            #     step=step,
+            # )
+            print(
+                f"[S:{step}][L:{loss.item():.4f}]|->eval:{np.mean(_all_returns):.4f}|->norm:{np.mean(_all_normalized_scores):.2f}"
+            )
+
             model.train()
 
     # if config.checkpoints_path is not None:

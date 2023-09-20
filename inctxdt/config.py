@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Union
 
+import json
+
 
 @dataclass
 class EnvSpec:
@@ -56,10 +58,15 @@ class LogConfig:
 
 @dataclass
 class ModalEmbedConfig:
-    tokenize_action: bool = False
-    num_bins: int = 4096
+    tokenize_action: bool = True
+    num_bins: int = 3000
+    strategy: str = "quantile"
     EmbedClass: str = "SequentialAction"
     action_embed_class: str = "ActionEmbedding"
+
+
+# @dataclass
+# class
 
 
 @dataclass
@@ -68,13 +75,14 @@ class Config:
     # dataset_type: str = "minari"
     dataset_name: Union[list[str], str] = "halfcheetah-medium-v2"
     dataset_type: str = "d4rl"
+    dataset_min_length: int = None
 
     device: str = "cpu"
     cmd: str = "train"
 
     exp_root: str = "output"
     exp_name: str = "latest"
-    save_model: bool = True
+    save_model: bool = False
 
     epochs: int = 1
     num_workers: int = 8
@@ -99,17 +107,22 @@ class Config:
     centroids: CentroidConfig = field(default_factory=CentroidConfig)
 
     # optim
-    betas: Tuple[float, float] = (0.9, 0.999)
     learning_rate: float = 1e-4
+    betas: Tuple[float, float] = (0.9, 0.999)
     weight_decay: float = 1e-4
-    warmup_steps: int = 100
+    warmup_steps: int = 1_000
+
+    # loss related
+    use_secondary_loss: bool = False
+    secondary_loss_scale: float = 1.0
 
     clip_grad: Optional[float] = 0.25
 
     # eval
-    reward_scale: float = 0.001
+    reward_scale: float = 1  # was 0.001
     target_return: float = 12000.0
     eval_episodes: int = 5
+    eval_before_train: bool = False
     eval_output_sequential: bool = False
 
     debug: str = None

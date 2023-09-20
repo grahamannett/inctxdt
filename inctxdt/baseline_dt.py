@@ -67,6 +67,7 @@ class DecisionTransformer(nn.Module):
         residual_dropout: float = 0.0,
         embedding_dropout: float = 0.0,
         max_action: float = 1.0,
+        only_logits: bool = False,
     ):
         super().__init__()
         self.emb_drop = nn.Dropout(embedding_dropout)
@@ -74,7 +75,7 @@ class DecisionTransformer(nn.Module):
 
         self.out_norm = nn.LayerNorm(embedding_dim)
         # additional seq_len embeddings for padding timesteps
-        self.timestep_emb = nn.Embedding((episode_len + seq_len) * 2, embedding_dim)
+        self.timestep_emb = nn.Embedding((episode_len + seq_len), embedding_dim)
         self.state_emb = nn.Linear(state_dim, embedding_dim)
         self.action_emb = nn.Linear(action_dim, embedding_dim)
         self.return_emb = nn.Linear(1, embedding_dim)
@@ -98,7 +99,7 @@ class DecisionTransformer(nn.Module):
         self.action_dim = action_dim
         self.episode_len = episode_len
         self.max_action = max_action
-        self.only_logits = False
+        self.only_logits = only_logits
 
         self.apply(self._init_weights)
 
@@ -159,61 +160,61 @@ class DecisionTransformer(nn.Module):
         return ModelOutput(logits=out, only_logits=self.only_logits)
 
 
-# https://github.com/pytorch/examples/blob/main/distributed/minGPT-ddp/mingpt/model.py
-def create_optimizer(model: torch.nn.Module, opt_config: dict):
-    """
-    This long function is unfortunately doing something very simple and is being very defensive:
-    We are separating out all parameters of the model into two buckets: those that will experience
-    weight decay for regularization and those that won't (biases, and layernorm/embedding weights).
-    We are then returning the PyTorch optimizer object.
-    """
+# # https://github.com/pytorch/examples/blob/main/distributed/minGPT-ddp/mingpt/model.py
+# def create_optimizer(model: torch.nn.Module, opt_config: dict):
+#     """
+#     This long function is unfortunately doing something very simple and is being very defensive:
+#     We are separating out all parameters of the model into two buckets: those that will experience
+#     weight decay for regularization and those that won't (biases, and layernorm/embedding weights).
+#     We are then returning the PyTorch optimizer object.
+#     """
 
-    # separate out all parameters to those that will and won't experience regularizing weight decay
-    decay = set()
-    no_decay = set()
-    whitelist_weight_modules = (torch.nn.Linear,)
-    blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
-    for mn, m in model.named_modules():
-        for pn, p in m.named_parameters():
-            fpn = "%s.%s" % (mn, pn) if mn else pn  # full param name
-            # random note: because named_modules and named_parameters are recursive
-            # we will see the same tensors p many many times. but doing it this way
-            # allows us to know which parent module any tensor p belongs to...
-            if pn.endswith("bias"):
-                # all biases will not be decayed
-                no_decay.add(fpn)
-            elif pn.endswith("weight") and isinstance(m, whitelist_weight_modules):
-                # weights of whitelist modules will be weight decayed
-                decay.add(fpn)
-            elif pn.endswith("in_proj_weight"):
-                # MHA projection layer
-                decay.add(fpn)
-            elif pn.endswith("weight") and isinstance(m, blacklist_weight_modules):
-                # weights of blacklist modules will NOT be weight decayed
-                no_decay.add(fpn)
-            elif pn.endswith("pos_emb"):
-                # positional embedding shouldn't be decayed
-                no_decay.add(fpn)
+#     # separate out all parameters to those that will and won't experience regularizing weight decay
+#     decay = set()
+#     no_decay = set()
+#     whitelist_weight_modules = (torch.nn.Linear,)
+#     blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
+#     for mn, m in model.named_modules():
+#         for pn, p in m.named_parameters():
+#             fpn = "%s.%s" % (mn, pn) if mn else pn  # full param name
+#             # random note: because named_modules and named_parameters are recursive
+#             # we will see the same tensors p many many times. but doing it this way
+#             # allows us to know which parent module any tensor p belongs to...
+#             if pn.endswith("bias"):
+#                 # all biases will not be decayed
+#                 no_decay.add(fpn)
+#             elif pn.endswith("weight") and isinstance(m, whitelist_weight_modules):
+#                 # weights of whitelist modules will be weight decayed
+#                 decay.add(fpn)
+#             elif pn.endswith("in_proj_weight"):
+#                 # MHA projection layer
+#                 decay.add(fpn)
+#             elif pn.endswith("weight") and isinstance(m, blacklist_weight_modules):
+#                 # weights of blacklist modules will NOT be weight decayed
+#                 no_decay.add(fpn)
+#             elif pn.endswith("pos_emb"):
+#                 # positional embedding shouldn't be decayed
+#                 no_decay.add(fpn)
 
-    # validate that we considered every parameter
-    param_dict = {pn: p for pn, p in model.named_parameters()}
-    inter_params = decay & no_decay
-    union_params = decay | no_decay
-    assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params),)
-    assert (
-        len(param_dict.keys() - union_params) == 0
-    ), "parameters %s were not separated into either decay/no_decay set!" % (str(param_dict.keys() - union_params),)
+#     # validate that we considered every parameter
+#     param_dict = {pn: p for pn, p in model.named_parameters()}
+#     inter_params = decay & no_decay
+#     union_params = decay | no_decay
+#     assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params),)
+#     assert (
+#         len(param_dict.keys() - union_params) == 0
+#     ), "parameters %s were not separated into either decay/no_decay set!" % (str(param_dict.keys() - union_params),)
 
-    # create the pytorch optimizer object
-    optim_groups = [
-        {
-            "params": [param_dict[pn] for pn in sorted(list(decay))],
-            "weight_decay": opt_config.weight_decay,
-        },
-        {
-            "params": [param_dict[pn] for pn in sorted(list(no_decay))],
-            "weight_decay": 0.0,
-        },
-    ]
-    optimizer = torch.optim.AdamW(optim_groups, lr=opt_config.learning_rate, betas=(0.9, 0.95))
-    return optimizer
+#     # create the pytorch optimizer object
+#     optim_groups = [
+#         {
+#             "params": [param_dict[pn] for pn in sorted(list(decay))],
+#             "weight_decay": opt_config.weight_decay,
+#         },
+#         {
+#             "params": [param_dict[pn] for pn in sorted(list(no_decay))],
+#             "weight_decay": 0.0,
+#         },
+#     ]
+#     optimizer = torch.optim.AdamW(optim_groups, lr=opt_config.learning_rate, betas=(0.9, 0.95))
+#     return optimizer

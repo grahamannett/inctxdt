@@ -6,7 +6,7 @@ import gym
 import d4rl  # put import for d4rl after gym.  its required
 import numpy as np
 from torch.utils.data import Dataset, IterableDataset
-from tqdm import trange
+from tqdm.auto import trange, tqdm
 
 from inctxdt.env_helper import _envs_registered
 from inctxdt.episode_data import EpisodeData
@@ -52,7 +52,9 @@ def discounted_cumsum(x: np.ndarray, gamma: float) -> np.ndarray:
 
 
 def load_d4rl_trajectories(
-    dataset_name: str, gamma: float = 1.0
+    dataset_name: str,
+    gamma: float = 1.0,
+    min_length: int = None,
 ) -> Tuple[List[DefaultDict[str, np.ndarray]], Dict[str, Any]]:
     dataset = gym.make(dataset_name).get_dataset()
     traj, traj_len = [], []
@@ -66,11 +68,19 @@ def load_d4rl_trajectories(
         if dataset["terminals"][i] or dataset["timeouts"][i]:
             episode_data = {k: np.array(v, dtype=np.float32) for k, v in data_.items()}
             # return-to-go if gamma=1.0, just discounted returns else
+
             episode_data["returns"] = discounted_cumsum(episode_data["rewards"], gamma=gamma)
             traj.append(episode_data)
             traj_len.append(episode_data["actions"].shape[0])
             # reset trajectory buffer
             data_ = defaultdict(list)
+
+    if min_length:
+        traj_filtered = []
+        for traj in tqdm(traj, desc="Filtering trajectories"):
+            if len(traj["rewards"]) > min_length:
+                traj_filtered.append(traj)
+        traj = traj_filtered
 
     # needed for normalization, weighted sampling, other stats can be added also
     info = {
@@ -84,17 +94,19 @@ def load_d4rl_trajectories(
 class BaseD4RLDataset(BaseDataset):
     _dataset_type = "d4rl"
 
-    def __init__(self, dataset_name: str, seq_len: int = 20, reward_scale: float = 1.0, *args, **kwargs):
+    def __init__(
+        self, dataset_name: str, seq_len: int = 20, reward_scale: float = 1.0, min_length: int = None, *args, **kwargs
+    ):
         self.dataset_name = dataset_name
-        self.dataset, info = load_d4rl_trajectories(dataset_name, gamma=1.0)
-        self.info = info
         self.reward_scale = reward_scale
+        self.min_length = min_length
         self.seq_len = seq_len
+        self.dataset, self.info = load_d4rl_trajectories(dataset_name, gamma=1.0, min_length=min_length)
 
-        self.state_mean = info["obs_mean"]
-        self.state_std = info["obs_std"]
+        self.state_mean = self.info["obs_mean"]
+        self.state_std = self.info["obs_std"]
         # https://github.com/kzl/decision-transformer/blob/e2d82e68f330c00f763507b3b01d774740bee53f/gym/experiment.py#L116 # noqa
-        self.sample_prob = info["traj_lens"] / info["traj_lens"].sum()
+        self.sample_prob = self.info["traj_lens"] / self.info["traj_lens"].sum()
 
         self.register_env()
 

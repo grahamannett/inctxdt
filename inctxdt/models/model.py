@@ -35,7 +35,7 @@ class TransformerBlock(nn.Module):
             nn.Dropout(residual_dropout),
         )
         # True value indicates that the corresponding position is not allowed to attend
-        self.register_buffer("causal_mask", ~torch.tril(torch.ones(seq_len, seq_len)).to(bool))
+        self.register_buffer("causal_mask", ~torch.tril(torch.ones(seq_len, seq_len)).to(torch.bool))
         self.seq_len = seq_len
 
     # [batch_size, seq_len, emb_dim] -> [batch_size, seq_len, emb_dim]
@@ -89,6 +89,7 @@ class DecisionTransformer(nn.Module):
         super().__init__()
         self.emb_drop = nn.Dropout(embedding_dropout)
         self.emb_norm = nn.LayerNorm(embedding_dim)
+        self.out_norm = nn.LayerNorm(embedding_dim)
 
         # try to get from env_spec as that is the most reliable/likely
         state_dim = getattr(env_spec, "state_dim", state_dim)
@@ -128,23 +129,45 @@ class DecisionTransformer(nn.Module):
 
         self.apply(self._init_weights)
 
-    def set_discretizer(self, type_name: str, bin_edges: torch.Tensor) -> None:
-        if not hasattr(self, "discretizers"):
-            self.discretizers = {}
-
-        self.discretizers[type_name] = bin_edges
-
     def _uniform_discretizer(self, type_name: str, arr: torch.Tensor, n_bins: int = 1024, eps: float = 1e-6):
         hist = torch.histogram(arr.view(-1), bins=n_bins, range=(range[0] - eps, range[1] + eps))
         self.discretizers[type_name] = hist
 
+    # def set_discretizer(self, type_name: str, enc: torch.Tensor) -> None:
+    def set_discretizer(self, type_name: str, encoder=None, bin_edges=None, device: str = None):
+        if not hasattr(self, "discretizers"):
+            self.discretizers = {}
+
+        if encoder:
+            group = ["encoder", encoder]
+        if bin_edges:
+            bin_edges = [b.to(device) for b in bin_edges]
+            group = ["bin_edges", bin_edges]
+
+        self.discretizers[type_name] = group
+
     def encode(self, type_name: str, x: torch.Tensor, dtype: torch.dtype = torch.long):
-        bin_edges = self.discretizers[type_name]
-        x = x.contiguous()
+        _fn = {
+            "encoder": self._encode_from_enc,
+            "bin_edges": self._encode_from_bins,
+        }
+        return _fn[self.discretizers[type_name][0]](type_name, x, dtype=dtype)
+
+    def _encode_from_enc(self, type_name: str, x: torch.Tensor, dtype: torch.dtype = torch.long):
+        _, enc = self.discretizers[type_name]
+        bs, seq_len, dim = x.shape
+        output = torch.tensor(enc.transform(x.reshape(-1, dim).cpu().detach()), dtype=dtype, device=x.device).reshape(
+            bs, seq_len, dim
+        )
+        return output
+
+    def _encode_from_bins(self, type_name: str, x: torch.Tensor, dtype: torch.dtype = torch.long):
+        _, bin_edges = self.discretizers[type_name]
         xt = torch.zeros_like(x, dtype=dtype, device=x.device)
         for jj in range(x.shape[-1]):
-            xt[..., jj] = torch.searchsorted(bin_edges[jj, 1:-1], x[..., jj], side="right") + (jj * len(bin_edges))
-
+            xt[..., jj] = torch.searchsorted(bin_edges[jj][1:-1], x[..., jj].contiguous(), side="right") + (
+                jj * len(bin_edges)
+            )
         return xt
 
     def decode(self, x: torch.Tensor, type_name: str):
@@ -187,6 +210,8 @@ class DecisionTransformer(nn.Module):
 
         for block in self.blocks:
             out = block(out, padding_mask=padding_mask)
+
+        out = self.out_norm(out)
 
         logits, obs_logits = self.forward_output(x=out)
 
@@ -253,20 +278,6 @@ class DecisionTransformer(nn.Module):
 
                 loss += batch_loss.item()
             print(f"iter:{n_iter} loss {loss}")
-
-    def generate_actions(
-        self,
-        timestep: int,
-        states: torch.Tensor,
-        actions: torch.Tensor,
-        returns_to_go: torch.Tensor,  # [batch_size, seq_len]
-        timesteps: torch.Tensor,  # [batch_size, seq_len]
-        action_len: int = None,  # generate this many
-        mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
-        padding_mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
-        **kwargs,
-    ) -> torch.FloatTensor:
-        raise NotImplementedError
 
 
 if __name__ == "__main__":

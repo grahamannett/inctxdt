@@ -56,17 +56,18 @@ def get_loss(model_output: ModelOutput, batch: Batch, config: Config = None) -> 
         pred = pred.squeeze()
 
     if pred.shape != target.shape:
-        breakpoint()
+        if pred.shape[-1] != target.shape[-1]:
+            pred = pred[..., : target.shape[-1]]
 
     loss = nn.functional.mse_loss(pred, target, reduction="none")
     loss = (loss * mask.unsqueeze(-1)).mean()
 
-    if getattr(config, "use_secondary_loss", False):
+    if config.use_secondary_loss and hasattr(model_output, "extra"):
         loss += _secondary_loss(
             model_output.extra["obs_logits"],
             batch.states,
             mask,
-            scale_factor=getattr(config, "secondary_loss_scale", 1.0),
+            scale_factor=config.secondary_loss_scale,
         )
 
     return loss
@@ -108,11 +109,11 @@ def train(
 
             yield batch_idx, batch
 
-    def post_get_loss(mod, loss):
+    def post_get_loss(loss):
         optimizer.zero_grad()
         accelerator.backward(loss)
         if config.clip_grad is not None:
-            torch.nn.utils.clip_grad_norm_(mod.parameters(), config.clip_grad)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.clip_grad)
 
         optimizer.step()
         scheduler.step()
@@ -120,20 +121,44 @@ def train(
     def _log(**kwargs):
         accelerator.log(kwargs)
 
-    def _norm_score(eval_returns: torch.Tensor) -> float:
-        if hasattr(env, "get_normalized_score"):
-            return (env.get_normalized_score(eval_returns) * 100).mean().item()
-        return 0
-
     def _save_model(epoch: Union[int, str]):
         if config.save_model:
             accelerator.wait_for_everyone()
             accelerator.save_model(model, f"{config.exp_dir}/model_{epoch}")
 
+    def _make_log_eval_vals(eval_ret: torch.Tensor):
+        eval_ret /= config.reward_scale
+        eval_score, eval_score_std = eval_ret.mean().item(), eval_ret.std().item()
+        norm_score, norm_score_std = None, None
+
+        if hasattr(env, "get_normalized_score"):
+            norm_score = env.get_normalized_score(eval_ret)
+            norm_score, norm_score_std = norm_score.mean().item(), norm_score.std().item()
+
+        return eval_score, eval_score_std, norm_score, norm_score_std
+
     # epoch_pbar = trange(config.epochs, desc=f"Epoch", disable=not _main_proc, leave=False)
     epoch_pbar = range(config.epochs)
 
     _save_model("init")
+
+    if config.eval_before_train:
+        # eval without training for baseline comparison
+        eval_ret, _ = eval_rollout_fn(
+            model,
+            venv,
+            env_spec,
+            target_return=config.target_return * config.reward_scale,
+            device=accelerator.device,
+            output_sequential=config.eval_output_sequential,
+        )
+        eval_score, eval_score_std, norm_score, norm_score_std = _make_log_eval_vals(eval_ret)
+        _log(
+            returns=eval_score,
+            returns_std=eval_score_std,
+            norm_score=norm_score,
+            norm_score_std=norm_score_std,
+        )
 
     for epoch in epoch_pbar:
         epoch_loss = 0
@@ -151,8 +176,8 @@ def train(
                 padding_mask=batch.make_padding_mask(),
             )
 
-            loss = get_loss(model_output, batch)
-            post_get_loss(model, loss)
+            loss = get_loss(model_output, batch, config=config)
+            post_get_loss(loss)
 
             epoch_loss += loss.item()
             if batch_idx % 100 == 0:
@@ -170,12 +195,15 @@ def train(
             output_sequential=config.eval_output_sequential,
         )
 
-        eval_ret /= config.reward_scale
-        eval_ret_mean = eval_ret.mean().item()
-        norm_score = _norm_score(eval_ret)
+        eval_score, eval_score_std, norm_score, norm_score_std = _make_log_eval_vals(eval_ret)
+        _log(
+            epoch=epoch,
+            returns=eval_score,
+            returns_std=eval_score_std,
+            norm_score=norm_score,
+            norm_score_std=norm_score_std,
+        )
 
-        _log(epoch=epoch, returns=eval_ret_mean, norm_score=norm_score if norm_score != 0 else None)
-
-        accelerator.print(f"[E:{epoch}][L:{epoch_loss:.4f}]|->eval:{eval_ret_mean:.2f}|->norm:{norm_score:.2f}")
+        accelerator.print(f"[E:{epoch}][L:{epoch_loss:.4f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}")
 
         _save_model(epoch)
