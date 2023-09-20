@@ -6,7 +6,6 @@ compare/wandb/
 
 output/
 compare/
-conf/
 experiments/
 wandb/
 tmp/
