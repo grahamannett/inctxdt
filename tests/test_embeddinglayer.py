@@ -11,8 +11,6 @@ from inctxdt.models.layers.stacked_layers import AgnosticEmbed
 device = "cpu"
 
 
-
-
 class TestEmbeddingLayer(unittest.TestCase):
     def test_agnostic(self):
         embed_mod = AgnosticEmbed(128, 500)
@@ -45,8 +43,6 @@ class TestEmbeddingLayer(unittest.TestCase):
 
         ds = D4rlDataset(env_name=base_env, seq_len=20)
         ds2 = D4rlDataset(env_name=alt_env, seq_len=20)
-
-        # breakpoint()
 
         dl = torch.utils.data.DataLoader(ds, batch_size=32, num_workers=8, collate_fn=Collate())
         dl2 = torch.utils.data.DataLoader(ds2, batch_size=32, num_workers=8, collate_fn=Collate())
@@ -160,15 +156,11 @@ class TestEmbeddingLayer(unittest.TestCase):
             padding_mask=batch2.make_padding_mask(),
         )
 
-        # breakpoint()
-
         # embeds = embedding_out
         # centers = cluster_info["state"].centroids
 
         # centers_embedding = torch.einsum("bse,ce->be", embeds, centers)
         # loss = -centers_embedding.mean()
-
-        # breakpoint()
 
         # numerator = torch.exp((embeds.T @ centers) / temp)
         # denominator = torch.exp((embeds.T @ centers) / temp) + torch.sum(torch.exp((embeds.T @ negatives) / temp))

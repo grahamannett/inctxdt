@@ -79,7 +79,7 @@ def run_autoregressive(config, dataset=None, dataloader=None, accelerator=None, 
         num_bins=config.modal_embed.num_bins,
         strategy=config.modal_embed.strategy,
     )
-    config.modal_embed.token_size = config.modal_embed.num_bins * len(bin_edges)
+    config.modal_embed.token_size = config.modal_embed.num_bins * len(bin_edges) * 2
 
     model = DecisionTransformer(
         state_dim=env_spec.state_dim,

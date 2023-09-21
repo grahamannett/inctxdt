@@ -71,9 +71,25 @@ class ModalEmbedConfig:
 
 @dataclass
 class Config:
+    # stuff to be able to use the config from corl
+    attention_dropout: float = 0.1
+    residual_dropout: float = 0.1
+    embedding_dropout: float = 0.1
+
+    checkpoints_path: Optional[str] = None
+    deterministic_torch: bool = False
+    train_seed: int = 10
+    eval_seed: int = 42
+    max_action: float = 1.0
+    name: str = None
+    # env_name: str = None
+    group: str = None
+    project: str = None
+    target_returns: List[float] = field(default_factory=list)
+
     # dataset_name: str = "pointmaze-umaze-v1"
     # dataset_type: str = "minari"
-    dataset_name: Union[list[str], str] = "halfcheetah-medium-v2"
+    env_name: Union[list[str], str] = "halfcheetah-medium-v2"
     dataset_type: str = "d4rl"
     dataset_min_length: int = None
 
@@ -84,6 +100,7 @@ class Config:
     exp_name: str = "latest"
     save_model: bool = False
 
+    update_steps: int = 100_000
     epochs: int = 1
     num_workers: int = 8
     batch_size: int = 32
@@ -92,7 +109,7 @@ class Config:
 
     # dataset
     seq_len: int = 30
-    episode_len: int = 2048
+    episode_len: int = 1000
     max_num_episodes: int = 2
 
     num_layers: int = 4
@@ -114,13 +131,14 @@ class Config:
 
     # loss related
     use_secondary_loss: bool = False
-    secondary_loss_scale: float = 1.0
+    secondary_loss_scale: float = None
 
     clip_grad: Optional[float] = 0.25
 
     # eval
     reward_scale: float = 1  # was 0.001
     target_return: float = 12000.0
+    eval_every: int = 1000
     eval_episodes: int = 5
     eval_before_train: bool = False
     eval_output_sequential: bool = False

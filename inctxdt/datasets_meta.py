@@ -1,9 +1,10 @@
+import random
 from dataclasses import asdict
 
 import torch
+from torch.utils.data import Dataset, IterableDataset
 
 from inctxdt.config import Config
-from torch.utils.data import Dataset
 
 
 class DiscretizedDataset(Dataset):
@@ -22,7 +23,6 @@ class DiscretizedDataset(Dataset):
         def _wrap_getitem(self, *args, **kwargs):
             episode = self._base_get_item(*args, **kwargs)
             episode = asdict(episode)
-            breakpoint()
             return episode
 
         dataset.__getitem__ = _wrap_getitem
@@ -78,3 +78,12 @@ class MultipleEpisodeMeta:
             available_keys = available_keys.intersection(episode_keys)
 
         return available_keys
+
+
+class IterDataset(IterableDataset):
+    def __init__(self, dataset: Dataset):
+        self.dataset = dataset
+
+    def __iter__(self):
+        while True:
+            yield self.dataset[random.randint(0, len(self.dataset) - 1)]

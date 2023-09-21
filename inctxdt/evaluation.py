@@ -131,28 +131,38 @@ def venv_eval_rollout(
     states[:, init_idx] = torch.as_tensor(states_init, device=device)
     returns[:, init_idx] = torch.as_tensor(target_return, device=device)
 
-    terminated, truncated = False, False
-
     # float64 b/c rewards come back as float64 and faster to not convert every time
     venv_episode_return = torch.zeros(num_envs, dtype=torch.float64)
     venv_episode_len = torch.ones(num_envs, dtype=torch.int)  # account for last step
     dones = torch.zeros(num_envs, dtype=torch.bool)
 
     # output sequential when actions are needed sequentially, i.e. for autoregressive models with single action output
-    def _output_sequential(step, states, actions, returns, timesteps, dones):
+    def _output_sequential(step, states, actions, returns, timesteps):
         for act_i in range(env_spec.action_dim):
             act_i_output = model(
-                states=states[~dones, : step + 1][:, -seq_len:],
-                actions=actions[~dones, : step + 1][:, -seq_len:],
-                returns_to_go=returns[~dones, : step + 1][:, -seq_len:],
-                timesteps=timesteps[~dones, : step + 1][:, -seq_len:],
+                states=states[:, : step + 1][:, -seq_len:],
+                actions=actions[:, : step + 1][:, -seq_len:],
+                returns_to_go=returns[:, : step + 1][:, -seq_len:],
+                timesteps=timesteps[:, : step + 1][:, -seq_len:],
             )
 
-            logits = act_i_output.logits.reshape(len(actions), -1, env_spec.action_dim)
+            # logits = act_i_output.logits.reshape(len(actions), -1, env_spec.action_dim)
+            logits = act_i_output.logits
 
             # output logits will increase until we hit seq len, so just take last values along dim 1
-            actions[:, step, act_i] = logits[:, -1, act_i]
+            actions[:, step + 1, act_i] = logits[:, -1, act_i]
         return actions[:, : step + 1, :]
+
+    def _output_normal(step, states, actions, returns, timesteps):
+        logits = model(
+            states=states[:, : step + 1][:, -seq_len:],
+            actions=actions[:, : step + 1][:, -seq_len:],
+            returns_to_go=returns[:, : step + 1][:, -seq_len:],
+            timesteps=timesteps[:, : step + 1][:, -seq_len:],
+        ).logits
+        return logits
+
+    output_fn = _output_sequential if output_sequential else _output_normal
 
     def _handle_step_dones(step_dones: Tuple[np.ndarray] | Tuple[np.ndarray, np.ndarray]) -> np.ndarray:
         if len(step_dones) == 2:
@@ -162,22 +172,21 @@ def venv_eval_rollout(
         return step_dones[0]
 
     for step in trange(max_episode_len, desc="Eval Rollout"):
-        if output_sequential:
-            logits = _output_sequential(step, states, actions, returns, timesteps, dones)
-        else:
-            logits = model(
-                states=states[:, : step + 1][:, -seq_len:],
-                actions=actions[:, : step + 1][:, -seq_len:],
-                returns_to_go=returns[:, : step + 1][:, -seq_len:],
-                timesteps=timesteps[:, : step + 1][:, -seq_len:],
-            ).logits
+        logits = output_fn(step, states, actions, returns, timesteps)
+        # if output_sequential:
+        #     logits = _output_sequential(step, states, actions, returns, timesteps)
+        # else:
+        #     logits = model(
+        #         states=states[:, : step + 1][:, -seq_len:],
+        #         actions=actions[:, : step + 1][:, -seq_len:],
+        #         returns_to_go=returns[:, : step + 1][:, -seq_len:],
+        #         timesteps=timesteps[:, : step + 1][:, -seq_len:],
+        #     ).logits
 
         predicted_action = logits.reshape(num_envs, -1, env_spec.action_dim)
         predicted_action = predicted_action[:, -1].squeeze()
 
         # unpack
-        # breakpoint()
-
         next_state, rew, *step_dones, info = venv.step(predicted_action.cpu().numpy())
         step_dones = _handle_step_dones(step_dones)
 

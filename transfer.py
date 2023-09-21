@@ -5,7 +5,6 @@ def main():
     config = pyrallis.parse(config_class=Config)
     torch.cuda.manual_seed(config.seed)
     torch.manual_seed(config.seed)
-    # breakpoint()
     dataset = make_dataset_from_config(config)
 
     _, env, venv, obs_space, act_space = get_env(config=config, dataset=dataset)

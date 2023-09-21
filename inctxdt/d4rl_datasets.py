@@ -68,7 +68,6 @@ def load_d4rl_trajectories(
         if dataset["terminals"][i] or dataset["timeouts"][i]:
             episode_data = {k: np.array(v, dtype=np.float32) for k, v in data_.items()}
             # return-to-go if gamma=1.0, just discounted returns else
-
             episode_data["returns"] = discounted_cumsum(episode_data["rewards"], gamma=gamma)
             traj.append(episode_data)
             traj_len.append(episode_data["actions"].shape[0])
@@ -246,12 +245,16 @@ class D4rlMultipleDataset(MultipleEpisodeMeta, D4rlDataset):
             return getattr(self.datasets[0], attr)
 
 
-class IterableD4rlDataset(BaseD4RLDataset, IterableDataset):
+class IterableD4rlDataset(IterableDataset):
+    def __init__(self, dataset: D4rlDataset):
+        self.dataset = dataset
+        self.sample_prob = dataset.sample_prob
+
     def __iter__(self):
         while True:
-            traj_idx = np.random.choice(len(self.dataset), p=self.sample_prob)
-            start_idx = random.randint(0, self.dataset[traj_idx]["rewards"].shape[0] - 1)
-            yield self._prepare_sample(traj_idx, start_idx)
+            yield self.dataset[random.randint(0, len(self.dataset) - 1)]
+            # traj_idx = np.random.choice(len(self.dataset), p=self.sample_prob)
+            # return self.dataset[traj_idx]
 
 
 if __name__ == "__main__":

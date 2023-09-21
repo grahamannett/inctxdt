@@ -74,7 +74,7 @@ _fn = {
 
 
 def get_env(config, dataset=None, env_name=None, dataset_type=None):
-    env_name = env_name or getattr(dataset, "env_name", config.dataset_name)
+    env_name = env_name or getattr(dataset, "env_name", config.env_name)
 
     dataset_type = dataset_type or getattr(dataset, "_dataset_type", config.dataset_type)
 
@@ -89,7 +89,6 @@ _envs_registered = {}
 
 
 def _get_env_spec(env_name: str = None, dataset_name: str = None) -> tuple[int, int]:
-    # breakpoint()
     assert env_name or dataset_name, "Must pass in either env_name or dataset_name"
     if env_name in _envs_registered:
         return _envs_registered[env_name]["action_space"], _envs_registered[env_name]["state_space"]

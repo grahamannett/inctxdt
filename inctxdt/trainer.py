@@ -6,19 +6,19 @@ from os import makedirs
 # import gym
 import gymnasium
 from accelerate import Accelerator
-import gc
 
 
 # NOTE: THIS IS BECAUSE IM USING GYM.MAKE HERE.  NEED TO FIX
 import torch
 import torch.nn as nn
-from tqdm.auto import tqdm
+from torch.utils.data import DataLoader
+from tqdm.auto import tqdm, trange
 
+from inctxdt.datasets_meta import IterDataset
 from inctxdt.batch import Batch
 from inctxdt.config import EnvSpec, Config
 from inctxdt.evaluation import venv_eval_rollout
 from inctxdt.models.model_output import ModelOutput
-from fast_pytorch_kmeans import KMeans
 
 
 def default_optimizer(model, config):
@@ -62,13 +62,14 @@ def get_loss(model_output: ModelOutput, batch: Batch, config: Config = None) -> 
     loss = nn.functional.mse_loss(pred, target, reduction="none")
     loss = (loss * mask.unsqueeze(-1)).mean()
 
-    if config.use_secondary_loss and hasattr(model_output, "extra"):
-        loss += _secondary_loss(
-            model_output.extra["obs_logits"],
-            batch.states,
-            mask,
-            scale_factor=config.secondary_loss_scale,
-        )
+    if (scale_factor := getattr(config, "secondary_loss_scale", None)) is not None:
+        if hasattr(model_output, "extra"):
+            loss += _secondary_loss(
+                model_output.extra["obs_logits"],
+                batch.states,
+                mask,
+                scale_factor=scale_factor,
+            )
 
     return loss
 
@@ -93,6 +94,15 @@ def train(
     if _main_proc and config.save_model:
         makedirs(config.exp_dir, exist_ok=True)
         torch.save(model, f"{config.exp_dir}/model_base")
+
+    # need this before we wrap as wrap seems to remove batch_size and other vars
+    trainloader = DataLoader(
+        dataset=IterDataset(dataset=dataloader.dataset),
+        batch_size=dataloader.batch_size,
+        pin_memory=dataloader.pin_memory,
+        num_workers=dataloader.num_workers,
+        collate_fn=dataloader.collate_fn,
+    )
 
     model, dataloader, optimizer, scheduler = accelerator.prepare(
         model,
@@ -142,8 +152,28 @@ def train(
 
     _save_model("init")
 
-    if config.eval_before_train:
-        # eval without training for baseline comparison
+    # if config.eval_before_train:
+    #     # eval without training for baseline comparison
+    #     eval_ret, _ = eval_rollout_fn(
+    #         model,
+    #         venv,
+    #         env_spec,
+    #         target_return=config.target_return * config.reward_scale,
+    #         device=accelerator.device,
+    #         output_sequential=config.eval_output_sequential,
+    #     )
+    #     eval_score, eval_score_std, norm_score, norm_score_std = _make_log_eval_vals(eval_ret)
+    #     _log(
+    #         returns=eval_score,
+    #         returns_std=eval_score_std,
+    #         norm_score=norm_score,
+    #         norm_score_std=norm_score_std,
+    #     )
+
+    def eval_fn(step):
+        model.eval()
+        # only eval one target return
+        # for target_return in config.target_return:
         eval_ret, _ = eval_rollout_fn(
             model,
             venv,
@@ -152,58 +182,48 @@ def train(
             device=accelerator.device,
             output_sequential=config.eval_output_sequential,
         )
+
         eval_score, eval_score_std, norm_score, norm_score_std = _make_log_eval_vals(eval_ret)
+
         _log(
-            returns=eval_score,
-            returns_std=eval_score_std,
-            norm_score=norm_score,
-            norm_score_std=norm_score_std,
+            # step=step,
+            rewards=eval_score,
+            rewards_std=eval_score_std,
+            normalized_score=norm_score,
+            normalized_score_std=norm_score_std,
         )
+        model.train()
+        return eval_score, norm_score
 
-    for epoch in epoch_pbar:
-        epoch_loss = 0
-
-        pbar = tqdm(dataloader, disable=not _main_proc)
+    train_iter = iter(trainloader)
+    # for epoch in epoch_pbar:
+    eval_score, norm_score = 0, 0
+    pbar = trange(config.update_steps, desc=f"Training", disable=not _main_proc, leave=False)
+    for step in pbar:
+        # pbar = tqdm(dataloader, disable=not _main_proc)
 
         model.train()
-        batch: Batch
-        for batch_idx, batch in data_iter_fn(enumerate(pbar)):
-            model_output = model.forward(
-                states=batch.states,
-                actions=batch.actions,
-                returns_to_go=batch.returns_to_go,
-                timesteps=batch.timesteps,
-                padding_mask=batch.make_padding_mask(),
-            )
-
-            loss = get_loss(model_output, batch, config=config)
-            post_get_loss(loss)
-
-            epoch_loss += loss.item()
-            if batch_idx % 100 == 0:
-                pbar.set_description(f"loss={loss.item():.4f}")
-
-            if (batch_idx % config.log.log_every) == 0:
-                _log(loss=loss.item())
-
-        eval_ret, _ = eval_rollout_fn(
-            model,
-            venv,
-            env_spec,
-            target_return=config.target_return * config.reward_scale,
-            device=accelerator.device,
-            output_sequential=config.eval_output_sequential,
+        batch: Batch = next(train_iter)
+        batch = batch.to(accelerator.device)
+        model_output = model.forward(
+            states=batch.states,
+            actions=batch.actions,
+            returns_to_go=batch.returns_to_go,
+            timesteps=batch.timesteps,
+            padding_mask=batch.make_padding_mask(),
         )
 
-        eval_score, eval_score_std, norm_score, norm_score_std = _make_log_eval_vals(eval_ret)
-        _log(
-            epoch=epoch,
-            returns=eval_score,
-            returns_std=eval_score_std,
-            norm_score=norm_score,
-            norm_score_std=norm_score_std,
-        )
+        loss = get_loss(model_output, batch, config=config)
+        post_get_loss(loss)
 
-        accelerator.print(f"[E:{epoch}][L:{epoch_loss:.4f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}")
+        # eval
+        if (step % config.eval_every) == 0:
+            eval_score, norm_score = eval_fn(step)
 
-        _save_model(epoch)
+        if (step % config.log.log_every) == 0:
+            _log(loss=loss.item(), learning_rate=scheduler.get_last_lr())
+
+        # accelerator.print(f"[S:{step}][L:{loss.item():.4f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}")
+        pbar.set_postfix_str(f"[S:{step}][L:{loss.item():.4f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}")
+
+        _save_model(step)

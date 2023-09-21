@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import wandb
 from torch.nn import functional as F
-from torch.utils.data import DataLoader, IterableDataset
+from torch.utils.data import DataLoader, IterableDataset, Dataset
 from tqdm.auto import tqdm, trange  # noqa
 
 
@@ -30,6 +30,9 @@ class TrainConfig:
     group: str = "DT-D4RL"
     name: str = "DT"
     mode: str = "disabled"
+    job_type: str = "baseline"
+    log_every: int = 100
+
     # model params
     embedding_dim: int = 128
     num_layers: int = 3
@@ -87,6 +90,7 @@ def wandb_init(config: dict) -> None:
         group=config["group"],
         name=config["name"],
         mode=config["mode"],
+        job_type=config["job_type"],
         id=str(uuid.uuid4()),
     )
     wandb.run.save()
@@ -170,7 +174,11 @@ class SequenceDataset(IterableDataset):
         # https://github.com/kzl/decision-transformer/blob/e2d82e68f330c00f763507b3b01d774740bee53f/gym/experiment.py#L116 # noqa
         self.sample_prob = info["traj_lens"] / info["traj_lens"].sum()
 
-    def __prepare_sample(self, traj_idx, start_idx):
+        self.dataset_indices = []
+        for i, traj in enumerate(self.dataset):
+            self.dataset_indices.extend([(i, j) for j in range(len(traj["returns"]))])
+
+    def _prepare_sample(self, traj_idx, start_idx):
         traj = self.dataset[traj_idx]
         # https://github.com/kzl/decision-transformer/blob/e2d82e68f330c00f763507b3b01d774740bee53f/gym/experiment.py#L128 # noqa
         states = traj["observations"][start_idx : start_idx + self.seq_len]
@@ -189,11 +197,19 @@ class SequenceDataset(IterableDataset):
 
         return states, actions, returns, time_steps, mask
 
+    def __len__(self):
+        return len(self.dataset_indices)
+
+    def __getitem__(self, idx: int):
+        traj_idx, sample_idx = self.dataset_indices[idx]
+        states, actions, returns, time_steps, mask = self._prepare_sample(traj_idx, sample_idx)
+        return states, actions, returns, time_steps, mask
+
     def __iter__(self):
         while True:
             traj_idx = np.random.choice(len(self.dataset), p=self.sample_prob)
             start_idx = random.randint(0, self.dataset[traj_idx]["rewards"].shape[0] - 1)
-            yield self.__prepare_sample(traj_idx, start_idx)
+            yield self._prepare_sample(traj_idx, start_idx)
 
 
 # Decision Transformer implementation
@@ -446,7 +462,8 @@ def train(config: TrainConfig):
 
     print(f"Total parameters: {sum(p.numel() for p in model.parameters())}")
     trainloader_iter = iter(trainloader)
-    for step in trange(config.update_steps, desc="Training"):
+    pbar = trange(config.update_steps, desc="Training")
+    for step in pbar:
         batch = next(trainloader_iter)
         states, actions, returns, time_steps, mask = [b.to(config.device) for b in batch]
         # True value indicates that the corresponding key value will be ignored
@@ -470,18 +487,19 @@ def train(config: TrainConfig):
         optim.step()
         scheduler.step()
 
-        wandb.log(
-            {
-                "train_loss": loss.item(),
-                "learning_rate": scheduler.get_last_lr()[0],
-            },
-            step=step,
-        )
+        if (step % config.log_every) == 0:
+            wandb.log(
+                {
+                    "loss": loss.item(),
+                    "learning_rate": scheduler.get_last_lr()[0],
+                },
+                step=step,
+            )
 
         # validation in the env for the actual online performance
         if step % config.eval_every == 0 or step == config.update_steps - 1:
             model.eval()
-            for target_return in config.target_returns:
+            for target_return in config.target_returns[:-1]:  # just take the first
                 eval_env.seed(config.eval_seed)
                 eval_returns = []
                 for _ in trange(config.eval_episodes, desc="Evaluation", leave=False):
@@ -497,13 +515,24 @@ def train(config: TrainConfig):
                 normalized_scores = eval_env.get_normalized_score(np.array(eval_returns)) * 100
                 wandb.log(
                     {
-                        f"eval/{target_return}_return_mean": np.mean(eval_returns),
-                        f"eval/{target_return}_return_std": np.std(eval_returns),
-                        f"eval/{target_return}_normalized_score_mean": np.mean(normalized_scores),
-                        f"eval/{target_return}_normalized_score_std": np.std(normalized_scores),
+                        "rewards": np.mean(eval_returns),
+                        "rewards_std": np.std(eval_returns),
+                        "normalized_score": np.mean(normalized_scores),
+                        "normalized_score_std": np.std(normalized_scores),
                     },
                     step=step,
                 )
+            pbar.set_postfix(
+                {
+                    "loss": loss.item(),
+                    "learning_rate": scheduler.get_last_lr()[0],
+                    "rewards": np.mean(eval_returns),
+                    "rewards_std": np.std(eval_returns),
+                    "normalized_score": np.mean(normalized_scores),
+                    "normalized_score_std": np.std(normalized_scores),
+                }
+            )
+
             model.train()
 
     if config.checkpoints_path is not None:

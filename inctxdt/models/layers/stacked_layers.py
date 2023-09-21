@@ -50,7 +50,7 @@ class ActionTokenizedEmbedding(BaseActionEmbedding):
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
         x = self.action_emb(x)
-        return self.pool_fn(x, dim=-2).squeeze()
+        return self.pool_fn(x, dim=-2)
 
 
 class ActionTokenizedSpreadEmbedding(BaseActionEmbedding):
@@ -106,8 +106,7 @@ class ActionTokenizedSpreadEmbedding(BaseActionEmbedding):
         return x
 
     def action_head(self, x: torch.Tensor, **kwargs):
-        # return self._action_head(x[:, :, 1:-1, :])
-        return self._action_head(x[:, :, 1:-1, :])
+        return self._action_head(x[:, :, 1:-1, :]).squeeze(-1)
 
 
 ModalEmbCls = {
@@ -146,7 +145,7 @@ class SequentialAction(BaseInputOutput):
         # self.conv = nn.Conv2d(embedding_dim, action_dim, kernel_size=kernel_size)
 
         # self.timestep_emb = nn.Embedding(episode_len + seq_len, embedding_dim)
-        self.timestep_emb = nn.Embedding(episode_len, self.embedding_dim)
+        self.timestep_emb = nn.Embedding(episode_len * 2, self.embedding_dim)
         self.state_emb = nn.Linear(state_dim, self.embedding_dim)
 
         self.return_emb = nn.Linear(1, self.embedding_dim)
@@ -182,6 +181,7 @@ class SequentialAction(BaseInputOutput):
         # add time emb, since time emb might be need to be repeated, we need to repeat it for each action
         ret_emb += time_emb
         state_emb += time_emb
+
         act_emb += self.action_emb._add_time_emb(time_emb)
 
         # stack embeddings so that we have [bs, seq_len * spread_dim, embedding_dim]
@@ -195,13 +195,7 @@ class SequentialAction(BaseInputOutput):
         return embeds, padding_mask
 
     def forward_output(self, x: torch.Tensor, *args, **kwargs):
-        # return self.action_head(x)
-        return self.forward_output_linear_action_head(x, *args, **kwargs)
-
-    def forward_output_linear_action_head(self, x: torch.Tensor, *args, **kwargs):
-        # if x is not None:
-        #     return _old_forward_output_linear_action_head(self, x, *args, **kwargs)
-
+        """last layer of model, or what we learn to predict"""
         bs = x.shape[0]
         # we want to reshape to reshape to [bs, seq_len, spread_dim, embedding_dim] because
         # the first value of each timestep corresponds to the state dim, regardless of how many actions

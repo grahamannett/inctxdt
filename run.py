@@ -32,26 +32,27 @@ def init_trackers(accelerator, config):
         project_name=config.log.project,
         init_kwargs={
             "wandb": {
-                "name": config.log.name,
-                # "id": str(uuid.uuid4()), # dont save id if you want the wandb names
                 "group": config.log.group,
+                "name": config.log.name,
                 "mode": config.log.mode,
                 "tags": config.log.tags,
                 # to save models code in wandb
                 "settings": wandb.Settings(code_dir="inctxdt/"),
+                # "id": str(uuid.uuid4()), # dont save id if you want the wandb names
             }
         },
     )
 
 
 def make_dataset_from_config(config: Config, dataset_name: str = None):
-    dataset_name = dataset_name or config.dataset_name
+    dataset_name = dataset_name or config.env_name
 
     if isinstance(dataset_name, list):
         dataset = D4rlMultipleDataset([make_dataset_from_config(config, name) for name in dataset_name])
         return dataset
 
     DatasetType = dispatch_dataset[config.dataset_type]
+
     dataset = DatasetType(
         dataset_name=dataset_name,
         seq_len=config.seq_len,

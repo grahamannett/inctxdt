@@ -150,6 +150,5 @@ class DynamicLayers(BaseInputOutput):
         self.forward_output = DynamicOutput(env_spec=env_spec, embedding_dim=embedding_dim)
 
     def forward(self, env_name: str, *args, **kwargs):
-        breakpoint()
         sequence, padding_mask = self.forward_embed(env_name, *args, **kwargs)
         return self.forward_output(env_name, sequence)

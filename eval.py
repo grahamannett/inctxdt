@@ -22,7 +22,7 @@ def eval_baseline(model, accelerator, config):
     env_spec = EnvSpec(
         episode_len=config.episode_len,
         seq_len=config.seq_len,
-        env_name=config.dataset_name,
+        env_name=config.env_name,
         state_dim=obs_space.shape[0],
         action_dim=action_space.shape[0],
     )
@@ -46,11 +46,11 @@ _, env, venv, obs_space, action_space = get_env(config)
 accelerator = Accelerator()
 # model = torch.load(f"{config.exp_dir}/model_base")
 # dataset = D4rlDataset(dataset_name=config.dataset_name, reward_scale=config.reward_scale)
-dataset = D4rlAcrossEpisodeDataset(dataset_name=config.dataset_name, seq_len=100, reward_scale=config.reward_scale)
+dataset = D4rlAcrossEpisodeDataset(dataset_name=config.env_name, seq_len=100, reward_scale=config.reward_scale)
 env_spec = EnvSpec(
     episode_len=config.episode_len,
     seq_len=config.seq_len,
-    env_name=config.dataset_name,
+    env_name=config.env_name,
     state_dim=obs_space.shape[0],
     action_dim=action_space.shape[0],
 )
@@ -89,7 +89,6 @@ dataloader = torch.utils.data.DataLoader(
 )
 
 # model = train_embeds(config, model, layers_to_train, dataloader=dataloader, accelerator=accelerator)
-# breakpoint()
 eval_ret, _ = venv_eval_rollout(
     model,
     venv,

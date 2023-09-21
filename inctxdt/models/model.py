@@ -142,16 +142,14 @@ class DecisionTransformer(nn.Module):
             group = ["encoder", encoder]
         if bin_edges:
             bin_edges = [b.to(device) for b in bin_edges]
-            group = ["bin_edges", bin_edges]
+            lengths = [len(b) for b in bin_edges]
+
+            for b_i in range(1, len(lengths)):
+                lengths[b_i] = lengths[b_i] + lengths[b_i - 1]
+
+            group = ["bin_edges", bin_edges, lengths]
 
         self.discretizers[type_name] = group
-
-    def encode(self, type_name: str, x: torch.Tensor, dtype: torch.dtype = torch.long):
-        _fn = {
-            "encoder": self._encode_from_enc,
-            "bin_edges": self._encode_from_bins,
-        }
-        return _fn[self.discretizers[type_name][0]](type_name, x, dtype=dtype)
 
     def _encode_from_enc(self, type_name: str, x: torch.Tensor, dtype: torch.dtype = torch.long):
         _, enc = self.discretizers[type_name]
@@ -162,13 +160,22 @@ class DecisionTransformer(nn.Module):
         return output
 
     def _encode_from_bins(self, type_name: str, x: torch.Tensor, dtype: torch.dtype = torch.long):
-        _, bin_edges = self.discretizers[type_name]
+        _, bin_edges, lengths = self.discretizers[type_name]
         xt = torch.zeros_like(x, dtype=dtype, device=x.device)
         for jj in range(x.shape[-1]):
-            xt[..., jj] = torch.searchsorted(bin_edges[jj][1:-1], x[..., jj].contiguous(), side="right") + (
-                jj * len(bin_edges)
-            )
+            feature_bin = bin_edges[jj]
+            xt[..., jj] = torch.searchsorted(feature_bin, x[..., jj].contiguous(), side="right") + lengths[jj]
+
+        xt += 1
         return xt
+
+    _fn = {
+        "encoder": _encode_from_enc,
+        "bin_edges": _encode_from_bins,
+    }
+
+    def encode(self, type_name: str, x: torch.Tensor, dtype: torch.dtype = torch.long):
+        return self._fn[self.discretizers[type_name][0]](self, type_name, x, dtype=dtype)
 
     def decode(self, x: torch.Tensor, type_name: str):
         return self.discretizers[type_name].bin_edges.to(x.device)[x]

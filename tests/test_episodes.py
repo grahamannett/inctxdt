@@ -73,7 +73,7 @@ class TestGetEnv(unittest.TestCase):
     def test_minari_dataset(self):
         dataset_name = "pointmaze-medium-v1"
         config = Config(dataset_name=dataset_name)
-        ds = MinariDataset(dataset_name=config.dataset_name)
+        ds = MinariDataset(dataset_name=config.env_name)
         env_fn, env, venv, obs_space, act_space = get_env(dataset=ds, config=config)
 
         new_env = env_fn()
@@ -103,7 +103,6 @@ class TestTokenized(unittest.TestCase):
         dataset = discretizer.use_with_dataset(dataset)
 
         ep1 = dataset[0]
-        breakpoint()
 
 
 if __name__ == "__main__":
