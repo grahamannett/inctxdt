@@ -173,15 +173,6 @@ def venv_eval_rollout(
 
     for step in trange(max_episode_len, desc="Eval Rollout"):
         logits = output_fn(step, states, actions, returns, timesteps)
-        # if output_sequential:
-        #     logits = _output_sequential(step, states, actions, returns, timesteps)
-        # else:
-        #     logits = model(
-        #         states=states[:, : step + 1][:, -seq_len:],
-        #         actions=actions[:, : step + 1][:, -seq_len:],
-        #         returns_to_go=returns[:, : step + 1][:, -seq_len:],
-        #         timesteps=timesteps[:, : step + 1][:, -seq_len:],
-        #     ).logits
 
         predicted_action = logits.reshape(num_envs, -1, env_spec.action_dim)
         predicted_action = predicted_action[:, -1].squeeze()

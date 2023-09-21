@@ -57,7 +57,7 @@ class TrainConfig:
     # evaluation params
     target_returns: Tuple[float, ...] = (12000.0, 6000.0)
     eval_episodes: int = 100
-    eval_every: int = 10_000
+    eval_every: int = 1_000
     # general params
     checkpoints_path: Optional[str] = None
     deterministic_torch: bool = False
@@ -522,15 +522,10 @@ def train(config: TrainConfig):
                     },
                     step=step,
                 )
-            pbar.set_postfix(
-                {
-                    "loss": loss.item(),
-                    "learning_rate": scheduler.get_last_lr()[0],
-                    "rewards": np.mean(eval_returns),
-                    "rewards_std": np.std(eval_returns),
-                    "normalized_score": np.mean(normalized_scores),
-                    "normalized_score_std": np.std(normalized_scores),
-                }
+                eval_score, norm_score = np.mean(eval_returns), np.mean(normalized_scores)
+
+            pbar.set_postfix_str(
+                f"[S:{step}][L:{loss.item():.4f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}"
             )
 
             model.train()

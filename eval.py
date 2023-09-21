@@ -31,7 +31,7 @@ def eval_baseline(model, accelerator, config):
         model,
         venv,
         env_spec,
-        target_return=config.target_return * config.reward_scale,
+        target_return=config.target_returns[0] * config.reward_scale,
         device=accelerator.device,
     )
 
