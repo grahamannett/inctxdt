@@ -11,6 +11,18 @@ class FlattenEnv(gymnasium.ObservationWrapper):
         return obs["observation"]
 
 
+class NormalizeObservation(gymnasium.ObservationWrapper):
+    def __init__(self, env, obs_shape, mean, std):
+        super().__init__(env)
+        self.observation_space = gymnasium.spaces.Box(-np.inf, np.inf, shape=obs_shape, dtype=np.float64)
+        self.mean = mean.flatten()
+        self.std = std.flatten()
+
+    def observation(self, observation: np.ndarray) -> np.ndarray:
+        out = (observation - self.mean) / self.std
+        return out
+
+
 def get_env_gymnasium(env_name: str, config=None, venv: bool = True):
     base_env = gymnasium.make(env_name)
     base_obs = base_env.reset()[0]
@@ -26,7 +38,7 @@ def get_env_gymnasium(env_name: str, config=None, venv: bool = True):
     def fn():
         env = gymnasium.make(env_name)
         env = FlattenEnv(env, base_obs.shape) if needs_flatten else env
-        env = gymnasium.wrappers.NormalizeObservation(env)
+        env = gymnasium.wrappers.TransformObservation(env, lambda obs: (obs - config.state_mean) / config.state_std)
         env = gymnasium.wrappers.TransformReward(env, lambda rew: rew * config.reward_scale)
         return env
 
@@ -47,12 +59,37 @@ def get_env_gym(env_name: str, config=None, venv: bool = True):
     import d4rl
 
     base_env = gym.make(env_name)
-    # base_obs = base_env.reset()[0]
+    base_obs = base_env.reset()
+    if isinstance(base_obs, (list, tuple)):
+        base_obs = base_obs[0]
+
+    class NormalizeObservation(gym.ObservationWrapper):
+        def __init__(self, env, obs_shape, mean, std):
+            super().__init__(env)
+            self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=obs_shape, dtype=np.float64)
+            self.mean = mean.flatten()
+            self.std = std.flatten()
+
+        def observation(self, observation: np.ndarray) -> np.ndarray:
+            out = (observation - self.mean) / self.std
+            return out
+
+    class NormalizeReward(gym.RewardWrapper):
+        def __init__(self, env, scale):
+            super().__init__(env)
+            self.scale = scale
+
+        def reward(self, reward: float) -> float:
+            return reward * self.scale
 
     def fn():
         env = gym.make(env_name)
-        env = gym.wrappers.NormalizeObservation(env)
-        env = gym.wrappers.TransformReward(env, lambda rew: rew * config.reward_scale)
+        # not sure exactly but seemed like TransformObservation messed up stuff.  could be one of the other bugs though.
+        env = NormalizeObservation(
+            env, base_obs.shape, mean=config.state_mean.flatten(), std=config.state_std.flatten()
+        )
+        env = NormalizeReward(env, config.reward_scale)
+
         return env
 
     base_env = fn()

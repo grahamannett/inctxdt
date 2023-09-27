@@ -32,13 +32,14 @@ def init_trackers(accelerator, config):
         project_name=config.log.project,
         init_kwargs={
             "wandb": {
-                "group": config.log.group,
+                # dont save id or name if you want the wandb names
+                # "id": str(uuid.uuid4()),
                 "name": config.log.name,
                 "mode": config.log.mode,
+                "group": config.log.group,
                 "tags": config.log.tags,
                 # to save models code in wandb
                 "settings": wandb.Settings(code_dir="inctxdt/"),
-                # "id": str(uuid.uuid4()), # dont save id if you want the wandb names
             }
         },
     )
@@ -70,6 +71,8 @@ def main():
     torch.manual_seed(config.seed)
 
     dataset = make_dataset_from_config(config)
+    config.state_mean = dataset.state_mean
+    config.state_std = dataset.state_std
 
     _, env, venv, obs_space, act_space = get_env(config=config, dataset=dataset)
 

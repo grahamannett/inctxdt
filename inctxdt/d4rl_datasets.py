@@ -2,6 +2,8 @@ import random
 from collections import defaultdict
 from typing import Any, DefaultDict, Dict, List, Tuple, Union
 
+import torch
+
 import gym
 import d4rl  # put import for d4rl after gym.  its required
 import numpy as np
@@ -85,6 +87,8 @@ def load_d4rl_trajectories(
     info = {
         "obs_mean": dataset["observations"].mean(0, keepdims=True),
         "obs_std": dataset["observations"].std(0, keepdims=True) + 1e-6,
+        "rew_mean": dataset["rewards"].mean(),
+        "rew_std": dataset["rewards"].std() + 1e-6,
         "traj_lens": np.array(traj_len),
     }
     return traj, info
@@ -151,19 +155,28 @@ class BaseD4RLDataset(BaseDataset):
     @staticmethod
     def collate_fn(batch_first: bool = True):
         def fn(episode_list: List[EpisodeData]) -> Batch:
-            eps = EpisodeList(episode_list, batch_first=batch_first)
             batch = Batch(
-                states=eps.states.pad_tensor,
-                actions=eps.actions.pad_tensor,
-                total_timesteps=eps.total_timesteps.tensor,
-                rewards=eps.rewards.pad_tensor,
-                returns_to_go=eps.returns_to_go.pad_tensor,
-                timesteps=eps.timesteps.pad_tensor,
-                mask=eps.mask.pad_tensor,
-                id=eps.id,
-                seed=eps.seed,
-                env_name=eps.env_name,
-                batch_size=[len(eps)],
+                states=torch.nn.utils.rnn.pad_sequence(
+                    [torch.from_numpy(e.states) for e in episode_list], batch_first=True
+                ),
+                actions=torch.nn.utils.rnn.pad_sequence(
+                    [torch.from_numpy(e.actions) for e in episode_list], batch_first=True
+                ),
+                total_timesteps=torch.vstack([torch.tensor(e.total_timesteps) for e in episode_list]),
+                rewards=torch.nn.utils.rnn.pad_sequence(
+                    [torch.from_numpy(e.rewards) for e in episode_list], batch_first=True
+                ),
+                returns_to_go=torch.nn.utils.rnn.pad_sequence(
+                    [torch.from_numpy(e.returns_to_go) for e in episode_list], batch_first=True
+                ),
+                timesteps=torch.vstack([torch.from_numpy(e.timesteps) for e in episode_list]),
+                mask=torch.nn.utils.rnn.pad_sequence(
+                    [torch.from_numpy(e.mask) for e in episode_list], batch_first=True
+                ),
+                id=[e.id for e in episode_list],
+                seed=[e.seed for e in episode_list],
+                env_name=[e.env_name for e in episode_list],
+                batch_size=[len(episode_list)],
             )
             return batch
 

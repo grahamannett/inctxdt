@@ -1,24 +1,22 @@
-from typing import Optional, Tuple, Union
-
 from os import makedirs
+from typing import Tuple, Union
 
 # import d4rl
 # import gym
 import gymnasium
-from accelerate import Accelerator
-
-
 # NOTE: THIS IS BECAUSE IM USING GYM.MAKE HERE.  NEED TO FIX
 import torch
 import torch.nn as nn
+from accelerate import Accelerator
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm, trange
 
-from inctxdt.datasets_meta import IterDataset
 from inctxdt.batch import Batch
-from inctxdt.config import EnvSpec, Config
+from inctxdt.config import Config, EnvSpec
+from inctxdt.datasets_meta import IterDataset
 from inctxdt.evaluation import venv_eval_rollout
 from inctxdt.models.model_output import ModelOutput
+from inctxdt.score_helpers import BestScore, EvalScore, EvalScores
 
 
 def default_optimizer(model, config):
@@ -36,40 +34,43 @@ def default_optimizer(model, config):
     return optimizer, scheduler
 
 
-def _secondary_loss(
-    obs_pred: torch.Tensor,
-    obs_target: torch.Tensor,
-    mask: Optional[torch.Tensor] = None,
-    scale_factor: float = 1.0,
-):
-    loss = nn.functional.mse_loss(obs_pred, obs_target, reduction="none")
+def _secondary_loss(preds, targets, mask, scale_factor: float = 1.0):
+    loss = nn.functional.mse_loss(preds, targets.detach(), reduction="none")
     if mask is not None:
-        loss = (loss * mask.unsqueeze(-1)).mean()
-    loss *= scale_factor
+        loss = loss * mask.unsqueeze(-1)
+
+    loss = (loss * scale_factor).mean()
     return loss
 
 
 def get_loss(model_output: ModelOutput, batch: Batch, config: Config = None) -> torch.Tensor:
-    target, mask, pred = batch.actions, batch.mask, model_output.logits
+    actions, mask, pred = batch.actions, batch.mask, model_output.logits
 
-    if pred.shape != target.shape:
+    if pred.shape != actions.shape:
         pred = pred.squeeze()
 
-    if pred.shape != target.shape:
-        if pred.shape[-1] != target.shape[-1]:
-            pred = pred[..., : target.shape[-1]]
+    # # commented out atm because loss not similar to baseline
+    # if pred.shape != actions.shape:
+    #     if pred.shape[-1] != actions.shape[-1]:
+    #         pred = pred[..., : actions.shape[-1]]
 
-    loss = nn.functional.mse_loss(pred, target, reduction="none")
+    loss = nn.functional.mse_loss(pred, actions.detach(), reduction="none")
     loss = (loss * mask.unsqueeze(-1)).mean()
 
-    if (scale_factor := getattr(config, "secondary_loss_scale", None)) is not None:
-        if hasattr(model_output, "extra"):
-            loss += _secondary_loss(
-                model_output.extra["obs_logits"],
-                batch.states,
-                mask,
-                scale_factor=scale_factor,
-            )
+    if config.use_secondary_loss:
+        if state_scale := config.state_loss_scale:
+            loss += (
+                nn.functional.mse_loss(model_output.extra["obs_logits"], batch.states, reduction=config.loss_reduction)
+                * mask.unsqueeze(-1)
+                * state_scale
+            ).mean()
+
+        if rewards_scale := config.rewards_loss_scale:
+            loss += (
+                nn.functional.mse_loss(model_output.extra["rewards"], batch.rewards, reduction=config.loss_reduction)
+                * mask.squeeze(-1)
+                * rewards_scale
+            ).mean()
 
     return loss
 
@@ -128,13 +129,16 @@ def train(
         optimizer.step()
         scheduler.step()
 
-    def _log(**kwargs):
-        accelerator.log(kwargs)
+    def _log(values: dict = None, step: int | None = None, log_kwargs: dict | None = {}):
+        accelerator.log(values, step=step, log_kwargs=log_kwargs)
 
-    def _save_model(epoch: Union[int, str]):
+    def _save_model(step: Union[int, str], infos: dict = None):
         if config.save_model:
             accelerator.wait_for_everyone()
-            accelerator.save_model(model, f"{config.exp_dir}/model_{epoch}")
+            accelerator.save_model(model, f"{config.exp_dir}/model_{step}")
+
+            if infos:
+                accelerator.save(infos, f"{config.exp_dir}/infos.pt")
 
     def _make_log_eval_vals(eval_ret: torch.Tensor):
         eval_ret /= config.reward_scale
@@ -142,70 +146,51 @@ def train(
         norm_score, norm_score_std = None, None
 
         if hasattr(env, "get_normalized_score"):
-            norm_score = env.get_normalized_score(eval_ret)
+            norm_score = env.get_normalized_score(eval_ret) * 100
             norm_score, norm_score_std = norm_score.mean().item(), norm_score.std().item()
 
         return eval_score, eval_score_std, norm_score, norm_score_std
 
-    # epoch_pbar = trange(config.epochs, desc=f"Epoch", disable=not _main_proc, leave=False)
-    epoch_pbar = range(config.epochs)
-
-    _save_model("init")
-
-    # if config.eval_before_train:
-    #     # eval without training for baseline comparison
-    #     eval_ret, _ = eval_rollout_fn(
-    #         model,
-    #         venv,
-    #         env_spec,
-    #         target_return=config.target_return * config.reward_scale,
-    #         device=accelerator.device,
-    #         output_sequential=config.eval_output_sequential,
-    #     )
-    #     eval_score, eval_score_std, norm_score, norm_score_std = _make_log_eval_vals(eval_ret)
-    #     _log(
-    #         returns=eval_score,
-    #         returns_std=eval_score_std,
-    #         norm_score=norm_score,
-    #         norm_score_std=norm_score_std,
-    #     )
-
-    def eval_fn(step):
+    def eval_fn(step) -> dict:
         model.eval()
-        # only eval one target return
-        # for target_return in config.target_return:
-        eval_ret, _ = eval_rollout_fn(
-            model,
-            venv,
-            env_spec,
-            target_return=config.target_return * config.reward_scale,
-            device=accelerator.device,
-            output_sequential=config.eval_output_sequential,
-        )
+        scores = EvalScores()
 
-        eval_score, eval_score_std, norm_score, norm_score_std = _make_log_eval_vals(eval_ret)
+        for target_return in config.target_returns:
+            eval_ret, _ = eval_rollout_fn(
+                model,
+                venv,
+                env_spec,
+                target_return=target_return * config.reward_scale,
+                device=accelerator.device,
+                output_sequential=config.eval_output_sequential,
+            )
 
-        _log(
-            # step=step,
-            rewards=eval_score,
-            rewards_std=eval_score_std,
-            normalized_score=norm_score,
-            normalized_score_std=norm_score_std,
-        )
+            eval_score, eval_score_std, norm_score, norm_score_std = _make_log_eval_vals(eval_ret)
+            _log(
+                {
+                    f"eval/{target_return}_return_mean": eval_score,
+                    f"eval/{target_return}_return_std": eval_score_std,
+                    f"eval/{target_return}_normalized_score_mean": norm_score,
+                    f"eval/{target_return}_normalized_score_std": norm_score_std,
+                },
+                step=step,
+            )
+            scores.target[f"{target_return}"] = EvalScore(eval_score, eval_score_std, norm_score, norm_score_std)
+
         model.train()
-        return eval_score, norm_score
+        return scores
 
     train_iter = iter(trainloader)
-    # for epoch in epoch_pbar:
-    eval_score, norm_score = 0, 0
-    pbar = trange(config.update_steps, desc=f"Training", disable=not _main_proc, leave=False)
-    for step in pbar:
-        # pbar = tqdm(dataloader, disable=not _main_proc)
+    _save_model("init")
 
+    pbar = trange(config.update_steps, desc=f"Training", disable=not _main_proc, leave=False)
+    best_score = BestScore()
+    infos = {}
+    for step in pbar:
         model.train()
         batch: Batch = next(train_iter)
         batch = batch.to(accelerator.device)
-        model_output = model.forward(
+        model_output = model(
             states=batch.states,
             actions=batch.actions,
             returns_to_go=batch.returns_to_go,
@@ -215,15 +200,24 @@ def train(
 
         loss = get_loss(model_output, batch, config=config)
         post_get_loss(loss)
+        last_lr = scheduler.get_last_lr()[0]
 
         # eval
         if (step % config.eval_every) == 0:
-            eval_score, norm_score = eval_fn(step)
+            scores: EvalScores = eval_fn(step)
+            eval_score, norm_score = scores.mean_eval_score, scores.mean_normalized_score
+            infos[f"eval/{step}"] = scores
+
+            best_score.update(scores=scores, step=step)
 
         if (step % config.log.log_every) == 0:
-            _log(loss=loss.item(), learning_rate=scheduler.get_last_lr())
+            _log({"loss": loss.item(), "learning_rate": last_lr}, step=step)
 
+        _save_model(step, infos=infos)
+
+        pbar.set_postfix_str(
+            f"[S:{step}][L:{loss.item():.4f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}|->lr:{last_lr:.4f}"
+        )
         # accelerator.print(f"[S:{step}][L:{loss.item():.4f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}")
-        pbar.set_postfix_str(f"[S:{step}][L:{loss.item():.4f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}")
 
-        _save_model(step)
+    accelerator.print(f"best scores: {best_score}")

@@ -58,11 +58,16 @@ class LogConfig:
 
 @dataclass
 class ModalEmbedConfig:
-    tokenize_action: bool = True
+    tokenize_action: bool = False
+    action_embed_class: str = "ActionEmbedding"
     num_bins: int = 3000
     strategy: str = "quantile"
+    per_action_encode: bool = True
     EmbedClass: str = "SequentialAction"
-    action_embed_class: str = "ActionEmbedding"
+
+    def __post_init__(self):
+        if self.tokenize_action and self.action_embed_class == "ActionEmbedding":
+            raise ValueError("ActionEmbedding doesnt work if tokenzing actions")
 
 
 # @dataclass
@@ -71,21 +76,23 @@ class ModalEmbedConfig:
 
 @dataclass
 class Config:
+    # LEAVE THESE TO BE ABLE TO USE THE CONFIGS FROM CORL
+    # --- NOT USED ---
+    # env_name: str = None
+    name: str = None
+    group: str = None
+    project: str = None
+    checkpoints_path: Optional[str] = None
+    deterministic_torch: bool = False
+
     # stuff to be able to use the config from corl
     attention_dropout: float = 0.1
     residual_dropout: float = 0.1
     embedding_dropout: float = 0.1
 
-    checkpoints_path: Optional[str] = None
-    deterministic_torch: bool = False
     train_seed: int = 10
     eval_seed: int = 42
     max_action: float = 1.0
-    name: str = None
-    # env_name: str = None
-    group: str = None
-    project: str = None
-    target_returns: List[float] = field(default_factory=list)
 
     # dataset_name: str = "pointmaze-umaze-v1"
     # dataset_type: str = "minari"
@@ -108,13 +115,13 @@ class Config:
     n_batches: int = -1
 
     # dataset
-    seq_len: int = 30
+    seq_len: int = 20
     episode_len: int = 1000
     max_num_episodes: int = 2
 
-    num_layers: int = 4
-    num_heads: int = 4
-    embedding_dim: int = 256
+    num_layers: int = 3
+    num_heads: int = 1
+    embedding_dim: int = 128
 
     adist: bool = False  # accelerate distributed
     dist: bool = False  # pytorch distributed
@@ -127,18 +134,20 @@ class Config:
     learning_rate: float = 1e-4
     betas: Tuple[float, float] = (0.9, 0.999)
     weight_decay: float = 1e-4
-    warmup_steps: int = 1_000
+    warmup_steps: int = 1_000  # 10000
 
     # loss related
     use_secondary_loss: bool = False
-    secondary_loss_scale: float = None
+    loss_reduction: str = "none"  # "mean"
+    state_loss_scale: float = 0.1
+    rewards_loss_scale: float = 0.1
 
     clip_grad: Optional[float] = 0.25
 
     # eval
     reward_scale: float = 1  # was 0.001
-    target_return: float = 12000.0
-    eval_every: int = 1000
+    target_returns: Tuple[float, ...] = (12000.0, 6000.0)
+    eval_every: int = 1_000
     eval_episodes: int = 5
     eval_before_train: bool = False
     eval_output_sequential: bool = False
@@ -163,6 +172,9 @@ class Config:
 
     @property
     def exp_dir(self) -> str:
+        if self.log.name:
+            return f"{self.exp_root}/{self.log.name}"
+
         return f"{self.exp_root}/{self.exp_name}"
 
     @property

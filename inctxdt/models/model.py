@@ -23,6 +23,7 @@ class TransformerBlock(nn.Module):
     ):
         super().__init__()
         self.feedforward_dim = feedforward_scale * embedding_dim
+        self.seq_len = seq_len
         self.norm1 = nn.LayerNorm(embedding_dim)
         self.norm2 = nn.LayerNorm(embedding_dim)
         self.drop = nn.Dropout(residual_dropout)
@@ -36,19 +37,16 @@ class TransformerBlock(nn.Module):
         )
         # True value indicates that the corresponding position is not allowed to attend
         self.register_buffer("causal_mask", ~torch.tril(torch.ones(seq_len, seq_len)).to(torch.bool))
-        self.seq_len = seq_len
 
     # [batch_size, seq_len, emb_dim] -> [batch_size, seq_len, emb_dim]
-
     def get_casual_mask(self, x: torch.Tensor) -> torch.Tensor:
-        # if x.shape[1] > self.causal_mask.shape[0]:
-        #     return ~torch.tril(torch.ones(x.shape[1], x.shape[1], dtype=bool)).to(x.device)
+        """casaul mask but allow for longer than seq_len"""
+        if x.shape[1] > self.causal_mask.shape[0]:
+            return ~torch.tril(torch.ones(x.shape[1], x.shape[1], dtype=bool)).to(x.device)
         return self.causal_mask[: x.shape[1], : x.shape[1]]
 
     def forward(self, x: torch.Tensor, padding_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        # causal_mask = self.causal_mask[: x.shape[1], : x.shape[1]]
-
-        causal_mask = self.get_casual_mask(x)
+        causal_mask = self.causal_mask[: x.shape[1], : x.shape[1]]
 
         norm_x = self.norm1(x)
         attention_out = self.attention(
@@ -84,16 +82,28 @@ class DecisionTransformer(nn.Module):
         max_action: float = 1.0,
         env_spec: Optional["EnvSpec"] = None,
         modal_embed: ModalEmbedConfig = None,
+        discretizers: dict = {},
         **kwargs,
     ):
         super().__init__()
-        self.emb_drop = nn.Dropout(embedding_dropout)
-        self.emb_norm = nn.LayerNorm(embedding_dim)
-        self.out_norm = nn.LayerNorm(embedding_dim)
 
         # try to get from env_spec as that is the most reliable/likely
         state_dim = getattr(env_spec, "state_dim", state_dim)
         action_dim = getattr(env_spec, "action_dim", action_dim)
+        # base params
+        self.seq_len = seq_len
+        self.embedding_dim = embedding_dim
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.episode_len = episode_len
+        self.max_action = max_action
+
+        self.discretizers = discretizers
+
+        # embedding drop/norm
+        self.emb_drop = nn.Dropout(embedding_dropout)
+        self.emb_norm = nn.LayerNorm(embedding_dim)
+        self.out_norm = nn.LayerNorm(embedding_dim)
 
         self.blocks = nn.ModuleList(
             [
@@ -107,6 +117,7 @@ class DecisionTransformer(nn.Module):
                 for _ in range(num_layers)
             ]
         )
+
         self.modal_embed_config = modal_embed or ModalEmbedConfig(embedding_dim=embedding_dim)
         #  Layers are things like - SequentialAction  - StackedEnvEmbedding
         EmbedClass = getattr(layers, self.modal_embed_config.EmbedClass)
@@ -117,17 +128,24 @@ class DecisionTransformer(nn.Module):
             seq_len=seq_len,
             state_dim=state_dim,
             action_dim=action_dim,
+            max_action=max_action,
         )
         self.embed_output_layers.patch_parent(parent=self)
 
-        self.seq_len = seq_len
-        self.embedding_dim = embedding_dim
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.episode_len = episode_len
-        self.max_action = max_action
+        self.observation_head = nn.Sequential(nn.Linear(self.embedding_dim, state_dim), nn.Tanh())
+        self.reward_head = nn.Sequential(nn.Linear(self.embedding_dim, 1))
 
         self.apply(self._init_weights)
+
+    @staticmethod
+    def _init_weights(module: nn.Module):
+        if isinstance(module, (nn.Linear, nn.Embedding)):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if isinstance(module, nn.Linear) and module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.LayerNorm):
+            torch.nn.init.zeros_(module.bias)
+            torch.nn.init.ones_(module.weight)
 
     def _uniform_discretizer(self, type_name: str, arr: torch.Tensor, n_bins: int = 1024, eps: float = 1e-6):
         hist = torch.histogram(arr.view(-1), bins=n_bins, range=(range[0] - eps, range[1] + eps))
@@ -162,10 +180,17 @@ class DecisionTransformer(nn.Module):
     def _encode_from_bins(self, type_name: str, x: torch.Tensor, dtype: torch.dtype = torch.long):
         _, bin_edges, lengths = self.discretizers[type_name]
         xt = torch.zeros_like(x, dtype=dtype, device=x.device)
-        for jj in range(x.shape[-1]):
-            feature_bin = bin_edges[jj]
-            xt[..., jj] = torch.searchsorted(feature_bin, x[..., jj].contiguous(), side="right") + lengths[jj]
 
+        lengths_inc = 0
+        feature_bin = bin_edges[0]
+        for jj in range(x.shape[-1]):
+            if len(bin_edges) > 1:
+                feature_bin = bin_edges[jj]
+                lengths_inc = lengths[jj]
+
+            xt[..., jj] = torch.searchsorted(feature_bin, x[..., jj].contiguous(), side="right") + lengths_inc
+
+        # offset by 1 to increase
         xt += 1
         return xt
 
@@ -180,16 +205,6 @@ class DecisionTransformer(nn.Module):
     def decode(self, x: torch.Tensor, type_name: str):
         return self.discretizers[type_name].bin_edges.to(x.device)[x]
 
-    @staticmethod
-    def _init_weights(module: nn.Module):
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if isinstance(module, nn.Linear) and module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.LayerNorm):
-            torch.nn.init.zeros_(module.bias)
-            torch.nn.init.ones_(module.weight)
-
     def forward(
         self,
         states: torch.Tensor,  # [batch_size, seq_len, state_dim]
@@ -200,17 +215,25 @@ class DecisionTransformer(nn.Module):
         padding_mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
         **kwargs,
     ) -> torch.FloatTensor:
+        bs, seq_len = states.shape[0], states.shape[1]
+
         if self.modal_embed_config.tokenize_action:
             actions = self.encode("actions", actions)
 
-        sequence, padding_mask = self.forward_embed(
+        # sequence should be:
+        #   [batch_size, seq_len * spread_dim, embedding_dim]
+        sequence = self.forward_embed(
             states=states,
             actions=actions,
             returns_to_go=returns_to_go,
             timesteps=timesteps,
-            padding_mask=padding_mask,
             **kwargs,
         )
+
+        spread_dim = sequence.shape[1] // seq_len
+        if padding_mask is not None:
+            # padding mask comes in as [bs, seq_len] -> want [bs, unpacked_sequence_len]
+            padding_mask = torch.stack([padding_mask for _ in range(spread_dim)], dim=-1).reshape(bs, -1)
 
         out = self.emb_norm(sequence)
         out = self.emb_drop(out)
@@ -218,11 +241,16 @@ class DecisionTransformer(nn.Module):
         for block in self.blocks:
             out = block(out, padding_mask=padding_mask)
 
-        out = self.out_norm(out)
+        # norm and reshape to [batch_size, seq_len, spread_dim, embedding_dim]
+        out = self.out_norm(out).reshape(bs, seq_len, spread_dim, self.embedding_dim)
 
-        logits, obs_logits = self.forward_output(x=out)
+        act_logits = self.forward_output(out) * self.max_action
 
-        return ModelOutput(logits=logits, extra={"obs_logits": obs_logits})
+        # extra
+        obs_logits = self.observation_head(out[:, :, 0, :])
+        rewards_out = self.reward_head(out[:, :, -1, :]).squeeze(-1)
+
+        return ModelOutput(logits=act_logits, extra={"obs_logits": obs_logits, "rewards": rewards_out})
 
     def train_new_state_emb(
         self,

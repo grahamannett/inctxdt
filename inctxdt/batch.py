@@ -58,14 +58,14 @@ class EpisodeList(list):
 class Batch:
     states: torch.Tensor | TensorDict
     actions: torch.Tensor
-    total_timesteps: Optional[torch.Tensor] = None
 
+    timesteps: Optional[torch.Tensor] = None
+    total_timesteps: Optional[torch.Tensor] = None
     rewards: Optional[torch.Tensor] = None
     returns_to_go: Optional[torch.Tensor] = None
     terminations: Optional[torch.Tensor] = None
     truncations: Optional[torch.Tensor] = None
     seed: Optional[torch.Tensor] = None  # out of order with EpisodeData
-    timesteps: Optional[torch.Tensor] = None
     mask: Optional[torch.Tensor] = None
     id: Optional[torch.Tensor] = None
     env_name: Optional[List[str]] = None
