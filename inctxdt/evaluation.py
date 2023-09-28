@@ -23,6 +23,13 @@ def _check_states(states: Any) -> TypeError:
     assert isinstance(states, np.ndarray), "states must be a numpy array. check wrapper."
 
 
+def _handle_step_dones(step_dones: Tuple[np.ndarray] | Tuple[np.ndarray, np.ndarray]) -> np.ndarray:
+    if len(step_dones) == 2:
+        term, trunc = step_dones
+        return term | trunc
+    return step_dones[0]
+
+
 # Training and evaluation logic
 @torch.no_grad()
 def eval_rollout(
@@ -31,6 +38,7 @@ def eval_rollout(
     env_spec: EnvSpec,
     device: str,
     target_return: float,
+    seed: int | list[int] = None,
 ) -> Tuple[float, float]:
     model.eval()
     states = torch.zeros(1, env_spec.episode_len + 1, env_spec.state_dim, dtype=torch.float, device=device)
@@ -38,7 +46,7 @@ def eval_rollout(
     returns = torch.zeros(1, env_spec.episode_len + 1, dtype=torch.float, device=device)
     timesteps = torch.arange(env_spec.episode_len, dtype=torch.long, device=device).view(1, -1)
 
-    states_init = env.reset()
+    states_init = env.reset(seed=seed)
 
     states_init = fix_obs_dict(states_init)
 
@@ -99,11 +107,14 @@ def venv_eval_rollout(
     target_return: float,
     output_sequential: bool = False,
     prior_episode: EpisodeData = None,
+    seed: int | list[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     assert isinstance(venv, (gymnasium.vector.VectorEnv, VectorEnv)), "venv must be a vectorized env."
 
     model.eval()
     num_envs = venv.num_envs
+    action_dim = env_spec.action_dim
+    state_dim = env_spec.state_dim
     # seq len is the model seq len, i.e. context length
     seq_len = env_spec.seq_len
     max_episode_len = env_spec.episode_len
@@ -113,9 +124,9 @@ def venv_eval_rollout(
     # init_idx is the index where the eval begins in the states/actions/returns.  0 if no prior episode
     init_idx = 0
 
-    states = torch.zeros(num_envs, episode_len + 1, env_spec.state_dim, dtype=torch.float, device=device)
     returns = torch.zeros(num_envs, episode_len + 1, dtype=torch.float, device=device)
-    actions = torch.zeros(num_envs, episode_len, env_spec.action_dim, dtype=torch.float, device=device)
+    states = torch.zeros(num_envs, episode_len + 1, state_dim, dtype=torch.float, device=device)
+    actions = torch.zeros(num_envs, episode_len, action_dim, dtype=torch.float, device=device)
     timesteps = torch.arange(env_spec.episode_len, dtype=torch.long, device=device)
     timesteps = timesteps.repeat(num_envs, 1).view(num_envs, -1)
 
@@ -127,7 +138,7 @@ def venv_eval_rollout(
         timesteps = torch.cat([prior_timesteps, timesteps], dim=-1)
         init_idx += len(prior_episode)
 
-    states_init = venv.reset()
+    states_init = venv.reset()  # note: using seed=seed here errors many envs
     states[:, init_idx] = torch.as_tensor(states_init, device=device)
     returns[:, init_idx] = torch.as_tensor(target_return, device=device)
 
@@ -135,53 +146,46 @@ def venv_eval_rollout(
     venv_episode_return = torch.zeros(num_envs, dtype=torch.float64)
     venv_episode_len = torch.ones(num_envs, dtype=torch.int)  # account for last step
     dones = torch.zeros(num_envs, dtype=torch.bool)
+    dones_mask = (~dones.unsqueeze(-1)).to(device)
 
     # output sequential when actions are needed sequentially, i.e. for autoregressive models with single action output
     def _output_sequential(step, states, actions, returns, timesteps):
-        for act_i in range(env_spec.action_dim):
-            act_i_output = model(
+        for act_i in range(action_dim):
+            predicted_action = model(
                 states=states[:, : step + 1][:, -seq_len:],
                 actions=actions[:, : step + 1][:, -seq_len:],
                 returns_to_go=returns[:, : step + 1][:, -seq_len:],
                 timesteps=timesteps[:, : step + 1][:, -seq_len:],
             )
 
-            # logits = act_i_output.logits.reshape(len(actions), -1, env_spec.action_dim)
-            logits = act_i_output.logits
-
+            if isinstance(predicted_action, ModelOutput):
+                predicted_action = predicted_action.logits
             # output logits will increase until we hit seq len, so just take last values along dim 1
-            actions[:, step + 1, act_i] = logits[:, -1, act_i]
+            actions[:, step + 1, act_i] = predicted_action[:, -1, act_i]
         return actions[:, : step + 1, :]
 
     def _output_normal(step, states, actions, returns, timesteps):
-        logits = model(
+        return model(
             states=states[:, : step + 1][:, -seq_len:],
             actions=actions[:, : step + 1][:, -seq_len:],
             returns_to_go=returns[:, : step + 1][:, -seq_len:],
             timesteps=timesteps[:, : step + 1][:, -seq_len:],
-        ).logits
-        return logits
+        )
 
     output_fn = _output_sequential if output_sequential else _output_normal
 
-    def _handle_step_dones(step_dones: Tuple[np.ndarray] | Tuple[np.ndarray, np.ndarray]) -> np.ndarray:
-        if len(step_dones) == 2:
-            term, trunc = step_dones
-            return term | trunc
-
-        return step_dones[0]
-
     for step in trange(max_episode_len, desc="Eval Rollout"):
-        logits = output_fn(step, states, actions, returns, timesteps)
+        predicted_action = output_fn(step, states, actions, returns, timesteps)
 
-        predicted_action = logits.reshape(num_envs, -1, env_spec.action_dim)
+        if isinstance(predicted_action, ModelOutput):
+            predicted_action = predicted_action.logits
+
+        # done know if i need to reshape (num_envs, -1, action_dim)
         predicted_action = predicted_action[:, -1].squeeze()
 
         # unpack
         next_state, rew, *step_dones, info = venv.step(predicted_action.cpu().numpy())
         step_dones = _handle_step_dones(step_dones)
-
-        dones[step_dones] = True
 
         next_state = fix_obs_dict(next_state)
         # convert np to torch otherwise ~dones will not work on np arrays when 1 env, e.g. you get
@@ -190,14 +194,19 @@ def venv_eval_rollout(
         rew = torch.as_tensor(rew, dtype=torch.float, device=device)
 
         # mask where dones are true, i.e. 0 out actions and states
-        dones_mask = (~dones.unsqueeze(-1)).to(device)
+
         actions[:, step] = predicted_action.view(num_envs, -1) * dones_mask
         states[:, step + 1] = next_state * dones_mask
 
         # these need to be 1D masks, not 2D like actions/states
         returns[:, step + 1] = (returns[:, step] - rew) * dones_mask.squeeze()
+
         venv_episode_return += (rew * dones_mask.squeeze()).to(venv_episode_return.device)
         venv_episode_len += ~dones  # or (~dones).to(int)
+
+        # update dones after we have used the current dones_mask since reward might come on last step
+        dones[step_dones] = True
+        dones_mask = (~dones.unsqueeze(-1)).to(device)
 
         if (dones == True).all():
             break

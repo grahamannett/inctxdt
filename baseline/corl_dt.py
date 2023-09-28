@@ -17,17 +17,24 @@ import numpy as np
 import pyrallis
 import torch
 import torch.nn as nn
-import wandb
 from torch.nn import functional as F
-from torch.utils.data import DataLoader, IterableDataset, Dataset
+from torch.utils.data import DataLoader, Dataset, IterableDataset
 from tqdm.auto import tqdm, trange  # noqa
+import wandb
+
+from inctxdt.config import EnvSpec
+from inctxdt.env_helper import get_env
+from inctxdt.evaluation import venv_eval_rollout
+from inctxdt.score_helpers import BestScore, EvalScore, EvalScores
 
 
 @dataclass
 class TrainConfig:
+    dataset_type = "d4rl"
     # wandb params
-    project: str = "CORL"
-    group: str = "DT-D4RL"
+
+    project: str = "inctxdt"
+    group: str = "DT-CORL"
     name: str = "DT"
     mode: str = "disabled"
     job_type: str = "baseline"
@@ -58,6 +65,7 @@ class TrainConfig:
     target_returns: Tuple[float, ...] = (12000.0, 6000.0)
     eval_episodes: int = 100
     eval_every: int = 1_000
+    eval_fn: str = "venv"
     # general params
     checkpoints_path: Optional[str] = None
     deterministic_torch: bool = False
@@ -184,7 +192,7 @@ class SequenceDataset(IterableDataset):
         states = traj["observations"][start_idx : start_idx + self.seq_len]
         actions = traj["actions"][start_idx : start_idx + self.seq_len]
         returns = traj["returns"][start_idx : start_idx + self.seq_len]
-        time_steps = np.arange(start_idx, start_idx + self.seq_len)
+        timesteps = np.arange(start_idx, start_idx + self.seq_len)
 
         states = (states - self.state_mean) / self.state_std
         returns = returns * self.reward_scale
@@ -195,15 +203,15 @@ class SequenceDataset(IterableDataset):
             actions = pad_along_axis(actions, pad_to=self.seq_len)
             returns = pad_along_axis(returns, pad_to=self.seq_len)
 
-        return states, actions, returns, time_steps, mask
+        return states, actions, returns, timesteps, mask
 
     def __len__(self):
         return len(self.dataset_indices)
 
     def __getitem__(self, idx: int):
         traj_idx, sample_idx = self.dataset_indices[idx]
-        states, actions, returns, time_steps, mask = self._prepare_sample(traj_idx, sample_idx)
-        return states, actions, returns, time_steps, mask
+        states, actions, returns, timesteps, mask = self._prepare_sample(traj_idx, sample_idx)
+        return states, actions, returns, timesteps, mask
 
     def __iter__(self):
         while True:
@@ -234,6 +242,7 @@ class TransformerBlock(nn.Module):
             nn.Linear(4 * embedding_dim, embedding_dim),
             nn.Dropout(residual_dropout),
         )
+
         # True value indicates that the corresponding position is not allowed to attend
         self.register_buffer("causal_mask", ~torch.tril(torch.ones(seq_len, seq_len)).to(bool))
         self.seq_len = seq_len
@@ -322,12 +331,12 @@ class DecisionTransformer(nn.Module):
         states: torch.Tensor,  # [batch_size, seq_len, state_dim]
         actions: torch.Tensor,  # [batch_size, seq_len, action_dim]
         returns_to_go: torch.Tensor,  # [batch_size, seq_len]
-        time_steps: torch.Tensor,  # [batch_size, seq_len]
+        timesteps: torch.Tensor,  # [batch_size, seq_len]
         padding_mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
     ) -> torch.FloatTensor:
         batch_size, seq_len = states.shape[0], states.shape[1]
         # [batch_size, seq_len, emb_dim]
-        time_emb = self.timestep_emb(time_steps)
+        time_emb = self.timestep_emb(timesteps)
         state_emb = self.state_emb(states) + time_emb
         act_emb = self.action_emb(actions) + time_emb
         returns_emb = self.return_emb(returns_to_go.unsqueeze(-1)) + time_emb
@@ -371,8 +380,8 @@ def eval_rollout(
     states = torch.zeros(1, model.episode_len + 1, model.state_dim, dtype=torch.float, device=device)
     actions = torch.zeros(1, model.episode_len, model.action_dim, dtype=torch.float, device=device)
     returns = torch.zeros(1, model.episode_len + 1, dtype=torch.float, device=device)
-    time_steps = torch.arange(model.episode_len, dtype=torch.long, device=device)
-    time_steps = time_steps.view(1, -1)
+    timesteps = torch.arange(model.episode_len, dtype=torch.long, device=device)
+    timesteps = timesteps.view(1, -1)
 
     states[:, 0] = torch.as_tensor(env.reset(), device=device)
     returns[:, 0] = torch.as_tensor(target_return, device=device)
@@ -387,7 +396,7 @@ def eval_rollout(
             states[:, : step + 1][:, -model.seq_len :],
             actions[:, : step + 1][:, -model.seq_len :],
             returns[:, : step + 1][:, -model.seq_len :],
-            time_steps[:, : step + 1][:, -model.seq_len :],
+            timesteps[:, : step + 1][:, -model.seq_len :],
         )
         predicted_action = predicted_actions[0, -1].cpu().numpy()
         next_state, reward, done, info = env.step(predicted_action)
@@ -426,6 +435,18 @@ def train(config: TrainConfig):
         state_std=dataset.state_std,
         reward_scale=config.reward_scale,
     )
+    # testing eval from mine
+    config.state_mean = dataset.state_mean
+    config.state_std = dataset.state_std
+    _, env, venv, obs_space, act_space = get_env(config=config, dataset=dataset)
+    env_spec = EnvSpec(
+        episode_len=config.episode_len,
+        seq_len=config.seq_len,
+        env_name=config.env_name,
+        state_dim=obs_space.shape[0],
+        action_dim=act_space.shape[0],
+    )
+
     # model & optimizer & scheduler setup
     config.state_dim = eval_env.observation_space.shape[0]
     config.action_dim = eval_env.action_space.shape[0]
@@ -443,14 +464,14 @@ def train(config: TrainConfig):
         max_action=config.max_action,
     ).to(config.device)
 
-    optim = torch.optim.AdamW(
+    optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
         betas=config.betas,
     )
     scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optim,
+        optimizer,
         lambda steps: min((steps + 1) / config.warmup_steps, 1),
     )
     # save config to the checkpoint
@@ -461,11 +482,20 @@ def train(config: TrainConfig):
             pyrallis.dump(config, f)
 
     print(f"Total parameters: {sum(p.numel() for p in model.parameters())}")
+
+    best_score = BestScore()
+    infos = {}
     trainloader_iter = iter(trainloader)
     pbar = trange(config.update_steps, desc="Training")
+
+    eval_fn = {
+        "venv": _venv_eval,
+        "corl": _corl_eval,
+    }
+
     for step in pbar:
         batch = next(trainloader_iter)
-        states, actions, returns, time_steps, mask = [b.to(config.device) for b in batch]
+        states, actions, returns, timesteps, mask = [b.to(config.device) for b in batch]
         # True value indicates that the corresponding key value will be ignored
         padding_mask = ~mask.to(torch.bool)
 
@@ -473,70 +503,133 @@ def train(config: TrainConfig):
             states=states,
             actions=actions,
             returns_to_go=returns,
-            time_steps=time_steps,
+            timesteps=timesteps,
             padding_mask=padding_mask,
         )
         loss = F.mse_loss(predicted_actions, actions.detach(), reduction="none")
         # [batch_size, seq_len, action_dim] * [batch_size, seq_len, 1]
         loss = (loss * mask.unsqueeze(-1)).mean()
 
-        optim.zero_grad()
+        optimizer.zero_grad()
         loss.backward()
         if config.clip_grad is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.clip_grad)
-        optim.step()
+        optimizer.step()
         scheduler.step()
+        last_lr = scheduler.get_last_lr()[0]
 
         if (step % config.log_every) == 0:
             wandb.log(
                 {
                     "loss": loss.item(),
-                    "learning_rate": scheduler.get_last_lr()[0],
+                    "learning_rate": last_lr,
                 },
                 step=step,
             )
 
         # validation in the env for the actual online performance
+
         if step % config.eval_every == 0 or step == config.update_steps - 1:
-            model.eval()
-            for target_return in config.target_returns[:-1]:  # just take the first
-                eval_env.seed(config.eval_seed)
-                eval_returns = []
-                for _ in trange(config.eval_episodes, desc="Evaluation", leave=False):
-                    eval_return, eval_len = eval_rollout(
-                        model=model,
-                        env=eval_env,
-                        target_return=target_return * config.reward_scale,
-                        device=config.device,
-                    )
-                    # unscale for logging & correct normalized score computation
-                    eval_returns.append(eval_return / config.reward_scale)
-
-                normalized_scores = eval_env.get_normalized_score(np.array(eval_returns)) * 100
-                wandb.log(
-                    {
-                        "rewards": np.mean(eval_returns),
-                        "rewards_std": np.std(eval_returns),
-                        "normalized_score": np.mean(normalized_scores),
-                        "normalized_score_std": np.std(normalized_scores),
-                    },
-                    step=step,
-                )
-                eval_score, norm_score = np.mean(eval_returns), np.mean(normalized_scores)
-
-            pbar.set_postfix_str(
-                f"[S:{step}][L:{loss.item():.4f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}"
+            scores: EvalScores = eval_fn[config.eval_fn](
+                step=step, config=config, model=model, env=env, venv=venv, env_spec=env_spec
             )
+            eval_score, norm_score = scores.mean_eval_score, scores.mean_normalized_score
+            infos[f"eval/{step}"] = scores
 
-            model.train()
+            best_score.update(scores=scores, step=step)
+
+        pbar.set_postfix_str(
+            f"[S:{step}][L:{loss.item():.4f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}|->lr:{last_lr:.4f}"
+        )
 
     if config.checkpoints_path is not None:
         checkpoint = {
             "model_state": model.state_dict(),
             "state_mean": dataset.state_mean,
             "state_std": dataset.state_std,
+            "infos": infos,
         }
         torch.save(checkpoint, os.path.join(config.checkpoints_path, "dt_checkpoint.pt"))
+
+    print(f"best scores: {best_score}")
+
+
+def _venv_eval(
+    step,
+    config,
+    model,
+    venv,
+    env,
+    env_spec,
+    **kwargs,
+):
+    scores = EvalScores()
+    model.eval()
+
+    for target_return in config.target_returns:
+        eval_ret, _ = venv_eval_rollout(
+            model,
+            venv,
+            env_spec,
+            target_return=config.target_returns[0] * config.reward_scale,
+            device=config.device,
+            output_sequential=False,
+        )
+
+        eval_ret = eval_ret / config.reward_scale
+        eval_score, eval_score_std = eval_ret.mean().item(), eval_ret.std().item()
+        # NEED TO RENORMALIZE BY 100 AS IN CORL DT OR THESE SCORES WILL LOOK BAD
+        norm_score = env.get_normalized_score(eval_ret) * 100
+        norm_score, norm_score_std = norm_score.mean().item(), norm_score.std().item()
+
+        wandb.log(
+            {
+                f"eval/{target_return}_return_mean": eval_score,
+                f"eval/{target_return}_return_std": eval_score_std,
+                f"eval/{target_return}_normalized_score_mean": norm_score,
+                f"eval/{target_return}_normalized_score_std": norm_score_std,
+            },
+            step=step,
+        )
+
+        scores.target[f"{target_return}"] = EvalScore(eval_score, eval_score_std, norm_score, norm_score_std)
+    model.train()
+    return scores
+
+
+def _corl_eval(step, config, model, env, **kwargs):
+    scores = EvalScores()
+    model.eval()
+    for target_return in config.target_returns:  # just take the first
+        env.seed(config.eval_seed)
+        eval_returns = []
+        for _ in trange(config.eval_episodes, desc="Evaluation", leave=False):
+            eval_return, eval_len = eval_rollout(
+                model=model,
+                env=env,
+                target_return=target_return * config.reward_scale,
+                device=config.device,
+            )
+            # unscale for logging & correct normalized score computation
+            eval_returns.append(eval_return / config.reward_scale)
+
+        normalized_scores = env.get_normalized_score(np.array(eval_returns)) * 100
+
+        eval_score, eval_score_std = np.mean(eval_returns), np.std(eval_returns)
+        norm_score, norm_score_std = np.mean(normalized_scores), np.std(normalized_scores)
+        wandb.log(
+            {
+                f"eval/{target_return}_return_mean": eval_score,
+                f"eval/{target_return}_return_std": eval_score_std,
+                f"eval/{target_return}_normalized_score_mean": norm_score,
+                f"eval/{target_return}_normalized_score_std": norm_score_std,
+            },
+            step=step,
+        )
+        scores.target[f"{target_return}"] = EvalScore(eval_score, eval_score_std, norm_score, norm_score_std)
+
+    model.train()
+    return scores
 
 
 if __name__ == "__main__":

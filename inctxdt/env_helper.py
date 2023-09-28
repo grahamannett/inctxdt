@@ -1,6 +1,8 @@
 import gymnasium
 import numpy as np
 
+from inctxdt.config import Config
+
 
 class FlattenEnv(gymnasium.ObservationWrapper):
     def __init__(self, env, obs_shape):
@@ -54,7 +56,7 @@ def get_env_gymnasium(env_name: str, config=None, venv: bool = True):
     return fn, base_env, venv, obs_space, base_env.action_space
 
 
-def get_env_gym(env_name: str, config=None, venv: bool = True):
+def get_env_gym(env_name: str, config: Config, venv: bool = True):
     import gym
     import d4rl
 
@@ -67,8 +69,7 @@ def get_env_gym(env_name: str, config=None, venv: bool = True):
         def __init__(self, env, obs_shape, mean, std):
             super().__init__(env)
             self.observation_space = gym.spaces.Box(-np.inf, np.inf, shape=obs_shape, dtype=np.float64)
-            self.mean = mean.flatten()
-            self.std = std.flatten()
+            self.mean, self.std = mean.flatten(), std.flatten()
 
         def observation(self, observation: np.ndarray) -> np.ndarray:
             out = (observation - self.mean) / self.std
@@ -84,11 +85,10 @@ def get_env_gym(env_name: str, config=None, venv: bool = True):
 
     def fn():
         env = gym.make(env_name)
-        # not sure exactly but seemed like TransformObservation messed up stuff.  could be one of the other bugs though.
-        env = NormalizeObservation(
-            env, base_obs.shape, mean=config.state_mean.flatten(), std=config.state_std.flatten()
-        )
-        env = NormalizeReward(env, config.reward_scale)
+        # not sure exactly but seemed like TransformObservation messed up stuff.
+        # could be one of the other bugs fixed the issue i thought was this though.
+        env = NormalizeObservation(env, base_obs.shape, mean=config.state_mean, std=config.state_std)
+        env = NormalizeReward(env, scale=config.reward_scale)
 
         return env
 

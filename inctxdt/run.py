@@ -1,7 +1,12 @@
+import random
+import os
+from uuid import uuid4
+
 import pyrallis
 import torch
-import wandb
+import numpy as np
 from accelerate import Accelerator
+import wandb
 
 from inctxdt.config import Config, EnvSpec
 from inctxdt.d4rl_datasets import D4rlAcrossEpisodeDataset, D4rlDataset, D4rlMultipleDataset
@@ -9,7 +14,11 @@ from inctxdt.env_helper import get_env
 from inctxdt.experiment_types import run_autoregressive, run_baseline
 from inctxdt.minari_datasets import AcrossEpisodeDataset, MinariDataset, MultipleMinariDataset
 
-dispatch_dataset = {
+import warnings
+
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+dataset_cls = {
     "minari": MinariDataset,
     "minari_across": AcrossEpisodeDataset,
     "minari_multiple": MultipleMinariDataset,
@@ -18,10 +27,21 @@ dispatch_dataset = {
     "d4rl_multiple": D4rlMultipleDataset,
 }
 
-dispatch_cmd = {
+run_fns = {
     "train": run_autoregressive,
     "baseline": run_baseline,
 }
+
+
+# note: cant set env seed when its venv
+def set_seed(seed: int, deterministic_torch: bool = False):
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    # torch.use_deterministic_algorithms(deterministic_torch)
 
 
 def init_trackers(accelerator, config):
@@ -33,8 +53,8 @@ def init_trackers(accelerator, config):
         init_kwargs={
             "wandb": {
                 # dont save id or name if you want the wandb names
-                # "id": str(uuid.uuid4()),
-                "name": config.log.name,
+                # "id": str(uuid.uuid4()), f"{self.name}-{self.env_name}-{str(uuid.uuid4())[:8]}"
+                "name": f"{config.log.name}-{str(uuid4())[:8]}",
                 "mode": config.log.mode,
                 "group": config.log.group,
                 "tags": config.log.tags,
@@ -52,7 +72,7 @@ def make_dataset_from_config(config: Config, dataset_name: str = None):
         dataset = D4rlMultipleDataset([make_dataset_from_config(config, name) for name in dataset_name])
         return dataset
 
-    DatasetType = dispatch_dataset[config.dataset_type]
+    DatasetType = dataset_cls[config.dataset_type]
 
     dataset = DatasetType(
         dataset_name=dataset_name,
@@ -67,8 +87,7 @@ def make_dataset_from_config(config: Config, dataset_name: str = None):
 
 def main():
     config = pyrallis.parse(config_class=Config)
-    torch.cuda.manual_seed(config.seed)
-    torch.manual_seed(config.seed)
+    set_seed(config.train_seed, config.deterministic_torch)
 
     dataset = make_dataset_from_config(config)
     config.state_mean = dataset.state_mean
@@ -87,12 +106,13 @@ def main():
     dataset.state_dim = env_spec.state_dim
     dataset.action_dim = env_spec.action_dim
 
-    # usually i try to init tracker last so i have last few seconds to exit script if needed
+    # usually i try to init tracker last so theres a few seconds to exit script if needed
     accelerator = Accelerator(log_with="wandb")
     init_trackers(accelerator, config)
-
+    # print config
     accelerator.print(config)
-    dispatch_cmd[config.cmd](config, dataset=dataset, accelerator=accelerator, env_spec=env_spec, env=env, venv=venv)
+
+    run_fns[config.cmd](config, dataset=dataset, accelerator=accelerator, env_spec=env_spec, env=env, venv=venv)
 
 
 if __name__ == "__main__":

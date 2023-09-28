@@ -40,6 +40,9 @@ def run_baseline(config, dataset=None, dataloader=None, accelerator=None, env_sp
         embedding_dim=config.embedding_dim,
         num_layers=config.num_layers,
         num_heads=config.num_heads,
+        attention_dropout=config.attention_dropout,
+        residual_dropout=config.residual_dropout,
+        embedding_dropout=config.embedding_dropout,
         seq_len=config.seq_len,
         episode_len=config.episode_len,
     )
@@ -53,8 +56,14 @@ def create_enc(arr: np.ndarray, num_bins: int = 1000, strategy: str = "quantile"
     return enc
 
 
-def create_bin_edges(arr: np.ndarray, num_bins: int = 1000, strategy: str = "quantile") -> torch.Tensor:
+def create_bin_edges(
+    arr: np.ndarray, num_bins: int = 1000, strategy: str = "quantile", per_action: bool = True
+) -> torch.Tensor:
     enc = KBinsDiscretizer(n_bins=num_bins, encode="ordinal", strategy=strategy)
+
+    if not per_action:
+        arr = arr.reshape(-1, 1)
+
     enc.fit(arr)
     # bin_edges might be uneven shaped b/c of quantile strategy
     return [torch.from_numpy(b) for b in enc.bin_edges_]
@@ -66,20 +75,25 @@ def run_autoregressive(config, dataset=None, dataloader=None, accelerator=None, 
     dataloader = dataloader_from_dataset(dataset, dataloader, config, accelerator=accelerator)
 
     # need to create discretization before creating model since we needs the vocab size which is probably action-dim*num_bins
-    # enc = create_enc(
-    #     arr=np.concatenate([v["actions"] for v in dataset.dataset]),
-    #     num_bins=config.modal_embed.num_bins,
-    #     strategy=config.modal_embed.strategy,
-    # )
 
-    # config.modal_embed.token_size = config.modal_embed.num_bins * len(enc.bin_edges_)
+    discretizers = {}
+    if config.modal_embed.tokenize_action:
+        bin_edges = [
+            b.to(accelerator.device)
+            for b in create_bin_edges(
+                arr=np.concatenate([v["actions"] for v in dataset.dataset]),
+                num_bins=config.modal_embed.num_bins,
+                strategy=config.modal_embed.strategy,
+                per_action=config.modal_embed.per_action_encode,
+            )
+        ]
+        discretizers["actions"] = [
+            "bin_edges",
+            bin_edges,
+            [sum(len(bin_edges[i]) for i in range(b_i + 1)) for b_i in range(len(bin_edges))],
+        ]
 
-    bin_edges = create_bin_edges(
-        arr=np.concatenate([v["actions"] for v in dataset.dataset]),
-        num_bins=config.modal_embed.num_bins,
-        strategy=config.modal_embed.strategy,
-    )
-    config.modal_embed.token_size = config.modal_embed.num_bins * len(bin_edges) * 2
+        config.modal_embed.token_size = config.modal_embed.num_bins * (len(bin_edges) * 2)
 
     model = DecisionTransformer(
         state_dim=env_spec.state_dim,
@@ -87,12 +101,15 @@ def run_autoregressive(config, dataset=None, dataloader=None, accelerator=None, 
         embedding_dim=config.embedding_dim,
         num_layers=config.num_layers,
         num_heads=config.num_heads,
+        attention_dropout=config.attention_dropout,
+        residual_dropout=config.residual_dropout,
+        embedding_dropout=config.embedding_dropout,
+        max_action=config.max_action,
         seq_len=config.seq_len,
         episode_len=config.episode_len,
         env_spec=env_spec,
         modal_embed=config.modal_embed,
+        discretizers=discretizers,
     )
-
-    model.set_discretizer("actions", bin_edges=bin_edges, device=accelerator.device)
 
     train(model, dataloader=dataloader, config=config, accelerator=accelerator, env_spec=env_spec, env=env, venv=venv)

@@ -4,6 +4,7 @@ from typing import Tuple, Union
 # import d4rl
 # import gym
 import gymnasium
+
 # NOTE: THIS IS BECAUSE IM USING GYM.MAKE HERE.  NEED TO FIX
 import torch
 import torch.nn as nn
@@ -87,7 +88,6 @@ def train(
     venv: gymnasium.vector.SyncVectorEnv = None,
 ):
     _main_proc = accelerator.is_local_main_process
-    eval_rollout_fn = getattr(config, "eval_func", venv_eval_rollout)
 
     if (optimizer is None) or (scheduler is None):
         optimizer, scheduler = default_optimizer(model, config)
@@ -152,17 +152,17 @@ def train(
         return eval_score, eval_score_std, norm_score, norm_score_std
 
     def eval_fn(step) -> dict:
-        model.eval()
         scores = EvalScores()
 
         for target_return in config.target_returns:
-            eval_ret, _ = eval_rollout_fn(
+            eval_ret, _ = venv_eval_rollout(
                 model,
                 venv,
                 env_spec,
                 target_return=target_return * config.reward_scale,
                 device=accelerator.device,
                 output_sequential=config.eval_output_sequential,
+                seed=config.eval_seed,
             )
 
             eval_score, eval_score_std, norm_score, norm_score_std = _make_log_eval_vals(eval_ret)

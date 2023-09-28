@@ -70,10 +70,6 @@ class ModalEmbedConfig:
             raise ValueError("ActionEmbedding doesnt work if tokenzing actions")
 
 
-# @dataclass
-# class
-
-
 @dataclass
 class Config:
     # LEAVE THESE TO BE ABLE TO USE THE CONFIGS FROM CORL
@@ -91,7 +87,8 @@ class Config:
     embedding_dropout: float = 0.1
 
     train_seed: int = 10
-    eval_seed: int = 42
+    eval_seed: int = 10
+
     max_action: float = 1.0
 
     # dataset_name: str = "pointmaze-umaze-v1"
@@ -189,7 +186,7 @@ class Config:
 
     def __repr__(self):
         output_str = ""
-        if self.debug:
+        if self.debug:  # allow extra debug message to be printed
             output_str += f"\n\n==>🤠|> {self.debug.upper()} <|🤠<==\n\n"
 
         output_str += f"=== Config ===\n"

@@ -21,18 +21,6 @@ class BaseActionEmbedding(BaseModalEmbedding):
         self.embedding_dim = embedding_dim
         self._action_head = nn.Sequential(nn.Linear(self.embedding_dim, self.action_dim), nn.Tanh())
 
-        self.apply(self._init_weights)
-
-    @staticmethod
-    def _init_weights(module: nn.Module):
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if isinstance(module, nn.Linear) and module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.LayerNorm):
-            torch.nn.init.zeros_(module.bias)
-            torch.nn.init.ones_(module.weight)
-
     def action_head(self, x: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         return self._action_head(x[:, :, 1, :])
 
@@ -152,25 +140,25 @@ class SequentialAction(BaseInputOutput):
         # self.conv = nn.Conv2d(embedding_dim, action_dim, kernel_size=kernel_size)
 
         # self.timestep_emb = nn.Embedding(episode_len + seq_len, embedding_dim)
-        self.timestep_emb = nn.Embedding(episode_len * 2, self.embedding_dim)
-        self.state_emb = nn.Linear(state_dim, self.embedding_dim)
-        self.return_emb = nn.Linear(1, self.embedding_dim)
+        self.timestep_branch = nn.Embedding(episode_len * 2, self.embedding_dim)
+        self.state_branch = nn.Linear(state_dim, self.embedding_dim)
+        self.returns_branch = nn.Linear(1, self.embedding_dim)
 
-        self.action_emb = ModalEmbCls[self.modal_embed_config.action_embed_class](
+        self.action_branch = ModalEmbCls[self.modal_embed_config.action_embed_class](
             action_dim=action_dim, embedding_dim=self.embedding_dim, **modal_embed_config.__dict__
         )
 
-        self.apply(self._init_weights)
+    #     self.apply(self._init_weights)
 
-    @staticmethod
-    def _init_weights(module: nn.Module):
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if isinstance(module, nn.Linear) and module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.LayerNorm):
-            torch.nn.init.zeros_(module.bias)
-            torch.nn.init.ones_(module.weight)
+    # @staticmethod
+    # def _init_weights(module: nn.Module):
+    #     if isinstance(module, (nn.Linear, nn.Embedding)):
+    #         torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+    #         if isinstance(module, nn.Linear) and module.bias is not None:
+    #             torch.nn.init.zeros_(module.bias)
+    #     elif isinstance(module, nn.LayerNorm):
+    #         torch.nn.init.zeros_(module.bias)
+    #         torch.nn.init.ones_(module.weight)
 
     def forward_embed(
         self,
@@ -184,21 +172,20 @@ class SequentialAction(BaseInputOutput):
         bs, seq_len = states.shape[0], states.shape[1]
         self._batch_seq_len = seq_len
 
-        time_emb = self.timestep_emb(timesteps)
+        time_emb = self.timestep_branch(timesteps)
 
-        ret_emb = self.return_emb(returns_to_go.unsqueeze(-1))
-        state_emb = self.state_emb(states)
-        act_emb = self.action_emb(actions)
-
-        # since we are flattening the actions for some embeddings, we need to repeat the time embedding for each action in some cases
+        ret_emb = self.returns_branch(returns_to_go.unsqueeze(-1))
+        state_emb = self.state_branch(states)
+        act_emb = self.action_branch(actions)
 
         # add time emb, since time emb might be need to be repeated, we need to repeat it for each action
         ret_emb += time_emb
         state_emb += time_emb
-        act_emb += self.action_emb._add_time_emb(time_emb)
+        act_emb += self.action_branch._add_time_emb(time_emb)
 
         # stack embeddings so that we have [bs, seq_len * spread_dim, embedding_dim]
-        embeds = torch.cat([ret_emb, state_emb, act_emb], dim=1)
+        # CAT DOES NOT WORK.  USE STACK
+        embeds = torch.stack([ret_emb, state_emb, act_emb], dim=2).reshape(bs, -1, self.embedding_dim)
         self.spread_dim = embeds.shape[1] // seq_len
 
         return embeds
@@ -211,7 +198,7 @@ class SequentialAction(BaseInputOutput):
         # x = x.reshape(bs, self._batch_seq_len, -1, self.embedding_dim)
 
         # 1 refers to state -> predict action
-        return self.action_emb.action_head(x)
+        return self.action_branch.action_head(x)
         # obs_logits = self.observation_head(x[:, :, 2, :])
 
 
