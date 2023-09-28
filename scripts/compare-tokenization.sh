@@ -1,22 +1,41 @@
 #!/bin/bash
-
+DEFAULT_TRAIN_SEED=10
 CUDA_DEVICE=1
 
-# action tokenized per action
-log_name='DT-sep-action-tokenized-antmaze-umaze-v2'
-CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python inctxdt/run.py --cmd=train --device=cuda --modal_embed.per_action_encode=True --modal_embed.tokenize_action=True --modal_embed.action_embed_class=ActionTokenizedEmbedding --config_path=conf/corl/dt/antmaze/umaze_v2.yaml --log.mode=online --log.name=$log_name  > output/logs/$log_name.log 2>&1 &
+# ARGS TO COME IN
+TRAIN_SEED="${1:-$DEFAULT_TRAIN_SEED}"
+
+#
+CONFIG_BASE=conf/corl/dt
+CONFIG_DIR=antmaze
+ENV=umaze_v2
+# ENV=medium_diverse_v2
 
 
-# action tokenized all actions
-log_name='DT-together-action-antmaze-umaze-v2'
-CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python inctxdt/run.py --cmd=train --device=cuda --modal_embed.per_action_encode=False --modal_embed.tokenize_action=True --modal_embed.action_embed_class=ActionTokenizedEmbedding --config_path=conf/corl/dt/antmaze/umaze_v2.yaml--log.mode=online --log.name=$log_name > output/logs/$log_name.log 2>&1 &
+GROUP=$CONFIG_DIR-$ENV # e.g. antmaze-medium_diverse_v2
+CONFIG_PATH=$CONFIG_BASE/$CONFIG_DIR/$ENV.yaml
 
-# corl baseline and my baseline should be very similar
 
-# baseline
-log_name='DT-baseline-antmaze-umaze-v2'
-CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python inctxdt/run.py --cmd=train --device=cuda --modal_embed.action_embed_class=ActionEmbedding --config_path=conf/corl/dt/antmaze/umaze_v2.yaml --log.mode=online --log.name=$log_name > output/logs/$log_name.log 2>&1 &
+# Action tokenized per action
+log_name=DT-seperate-tokenized-$GROUP
+command="CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python inctxdt/run.py --cmd=train --device=cuda --modal_embed.per_action_encode=True --modal_embed.tokenize_action=True --modal_embed.action_embed_class=ActionTokenizedEmbedding --config_path=$CONFIG_PATH --log.mode=online --log.name=$log_name --log.group=$GROUP --train_seed=$TRAIN_SEED --log.job_type=$log_name > output/logs/$log_name-$TRAIN_SEED.log 2>&1 &"
+echo -e "Running:\n=>$command"
+eval $command
+
+# Action tokenized all actions
+log_name=DT-together-tokenized-$GROUP
+command="CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python inctxdt/run.py --cmd=train --device=cuda --modal_embed.per_action_encode=False --modal_embed.tokenize_action=True --modal_embed.action_embed_class=ActionTokenizedEmbedding --config_path=$CONFIG_PATH --log.mode=online --log.name=$log_name --log.group=$GROUP --train_seed=$TRAIN_SEED --log.job_type=$log_name > output/logs/$log_name-$TRAIN_SEED.log 2>&1 &"
+echo -e "Running:\n=>$command"
+eval $command
+
+# Baseline
+log_name=DT-baseline-$GROUP
+command="CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python inctxdt/run.py --cmd=train --device=cuda --modal_embed.action_embed_class=ActionEmbedding --config_path=$CONFIG_PATH --log.mode=online --log.name=$log_name --log.job_type=$log_name --log.group=$GROUP --train_seed=$TRAIN_SEED > output/logs/baseline-$GROUP-$TRAIN_SEED.log 2>&1 &"
+echo -e "Running:\n=>$command"
+eval $command
 
 # CORL Baseline
-# CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python baseline/corl_dt.py --config_path=conf/corl/dt/antmaze/umaze_v2.yaml --mode=online --name="CORL-DT" --checkpoints_path="output/corl" > output/logs/corl-antmaze-umaze.log 2>&1 &
+command="CUDA_VISIBLE_DEVICES=$CUDA_DEVICE python baseline/corl_dt.py  --mode=online --name=CORL-DT-$GROUP --checkpoints_path="output/corl" --config_path=$CONFIG_PATH --group=$GROUP --job_type=corl_baseline --train_seed=$TRAIN_SEED > output/logs/corl-$GROUP-$TRAIN_SEED.log 2>&1 &"
+echo -e "Running:\n=>$command"
+eval $command
 
