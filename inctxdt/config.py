@@ -1,7 +1,6 @@
+import uuid
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Union
-
-import json
 
 
 @dataclass
@@ -54,6 +53,9 @@ class LogConfig:
 
     # logging related
     log_every: int = 100
+
+    job_type: str = None
+    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
 
 
 @dataclass

@@ -54,10 +54,11 @@ def init_trackers(accelerator, config):
             "wandb": {
                 # dont save id or name if you want the wandb names
                 # "id": str(uuid.uuid4()), f"{self.name}-{self.env_name}-{str(uuid.uuid4())[:8]}"
-                "name": f"{config.log.name}-{str(uuid4())[:8]}",
+                "name": f"{config.log.name}-{config.log.id}",
                 "mode": config.log.mode,
                 "group": config.log.group,
                 "tags": config.log.tags,
+                "job_type": config.log.job_type,
                 # to save models code in wandb
                 "settings": wandb.Settings(code_dir="inctxdt/"),
             }
