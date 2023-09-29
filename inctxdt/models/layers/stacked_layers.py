@@ -77,8 +77,6 @@ class ActionTokenizedSpreadEmbedding(BaseActionEmbedding):
         self._action_head = nn.Sequential(nn.Linear(self.embedding_dim, 1), nn.Tanh())
         self.action_pos_emb = nn.Parameter(torch.rand(self.max_num_actions, self.embedding_dim))
 
-        self.register_buffer("action_idxs", torch.arange(action_dim**2))
-
     def _add_time_emb(self, time_emb: torch.Tensor, tokens: torch.Tensor, **kwargs) -> torch.Tensor:
         # NOTE: cant decide if i should use self.action_dim or pass x in
         # repeat time emb along action dim so that it is [bs, seq_len, action_dim, emb_dim]
@@ -111,6 +109,7 @@ class ActionTokenizedSpreadEmbedding(BaseActionEmbedding):
     ) -> torch.Tensor:
         # possibly you could do this without spreading the act_emb
         #  such that you just cat them BUT! IT PROBABLY WILL MESS UP THE TIME DIM
+        # not sure which is quicker between what is below and -> torch.cat([torch.stack([ret_emb, state_emb], dim=2), act_emb], dim=2)
         embeds = torch.stack([ret_emb, state_emb] + [act_emb[..., i, :] for i in range(act_emb.shape[-2])], dim=2)
         return embeds
 

@@ -126,7 +126,7 @@ def venv_eval_rollout(
 
     returns = torch.zeros(num_envs, episode_len + 1, dtype=torch.float, device=device)
     states = torch.zeros(num_envs, episode_len + 1, state_dim, dtype=torch.float, device=device)
-    actions = torch.zeros(num_envs, episode_len, action_dim, dtype=torch.float, device=device)
+    actions = torch.zeros(num_envs, episode_len + 1, action_dim, dtype=torch.float, device=device)
     timesteps = torch.arange(env_spec.episode_len, dtype=torch.long, device=device)
     timesteps = timesteps.repeat(num_envs, 1).view(num_envs, -1)
 

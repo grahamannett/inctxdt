@@ -28,6 +28,7 @@ def dataloader_from_dataset(dataset, dataloader=None, config=None, accelerator=N
     return dataloader
 
 
+# dont even think this is used anymore
 def run_baseline(config, dataset=None, dataloader=None, accelerator=None, env_spec=None, env=None, venv=None):
     assert dataset or dataloader, "either dataset or dataloader must be provided"
     from inctxdt.baseline_dt import DecisionTransformer as DecisionTransformerBaseline
@@ -75,7 +76,6 @@ def run_autoregressive(config, dataset=None, dataloader=None, accelerator=None, 
     dataloader = dataloader_from_dataset(dataset, dataloader, config, accelerator=accelerator)
 
     # need to create discretization before creating model since we needs the vocab size which is probably action-dim*num_bins
-
     discretizers = {}
     if config.modal_embed.tokenize_action:
         bin_edges = [
@@ -112,4 +112,10 @@ def run_autoregressive(config, dataset=None, dataloader=None, accelerator=None, 
         discretizers=discretizers,
     )
 
-    train(model, dataloader=dataloader, config=config, accelerator=accelerator, env_spec=env_spec, env=env, venv=venv)
+    model, optimizer, scheduler, infos = train(
+        model, dataloader=dataloader, config=config, accelerator=accelerator, env_spec=env_spec, env=env, venv=venv
+    )
+
+    return model, optimizer, scheduler, infos
+
+

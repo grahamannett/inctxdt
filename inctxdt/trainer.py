@@ -59,18 +59,18 @@ def get_loss(model_output: ModelOutput, batch: Batch, config: Config = None) -> 
     loss = (loss * mask.unsqueeze(-1)).mean()
 
     if config.use_secondary_loss:
-        if state_scale := config.state_loss_scale:
+        if state_scale_factor := config.scale_state_loss:
             loss += (
                 nn.functional.mse_loss(model_output.extra["obs_logits"], batch.states, reduction=config.loss_reduction)
                 * mask.unsqueeze(-1)
-                * state_scale
+                * state_scale_factor
             ).mean()
 
-        if rewards_scale := config.rewards_loss_scale:
+        if reward_scale_factor := config.scale_rewards_loss:
             loss += (
                 nn.functional.mse_loss(model_output.extra["rewards"], batch.rewards, reduction=config.loss_reduction)
                 * mask.squeeze(-1)
-                * rewards_scale
+                * reward_scale_factor
             ).mean()
 
     return loss
@@ -87,6 +87,7 @@ def train(
     env: gymnasium.Env = None,
     venv: gymnasium.vector.SyncVectorEnv = None,
 ):
+    _save_suffix_idx = 0  #
     _main_proc = accelerator.is_local_main_process
 
     if (optimizer is None) or (scheduler is None):
@@ -132,17 +133,15 @@ def train(
     def _log(values: dict = None, step: int | None = None, log_kwargs: dict | None = {}):
         accelerator.log(values, step=step, log_kwargs=log_kwargs)
 
-    _save_idx = 0
-
-    def _save_model(step: Union[int, str] = None, infos: dict = None):
+    def _save_model(save_suffix: Union[int, str] = None, infos: dict = None):
         if config.save_model:
-            if not step:
-                nonlocal _save_idx
-                step = _save_idx
-                _save_idx += 1
+            if not save_suffix:
+                nonlocal _save_suffix_idx
+                save_suffix = _save_suffix_idx
+                _save_suffix_idx += 1
 
             accelerator.wait_for_everyone()
-            accelerator.save_model(model, f"{config.exp_dir}/model_{step}")
+            accelerator.save_model(model, f"{config.exp_dir}/model_{save_suffix}")
 
             if infos:
                 accelerator.save(infos, f"{config.exp_dir}/infos.pt")
@@ -188,11 +187,12 @@ def train(
         return scores
 
     train_iter = iter(trainloader)
-    _save_model("init")
+    _save_model(save_suffix="init")
 
     pbar = trange(config.update_steps, desc=f"Training", disable=not _main_proc, leave=False)
     best_score = BestScore()
     infos = {}
+
     for step in pbar:
         model.train()
         batch: Batch = next(train_iter)
