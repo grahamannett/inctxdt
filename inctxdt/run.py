@@ -88,6 +88,7 @@ def make_dataset_from_config(config: Config, dataset_name: str = None):
 
 def main():
     config = pyrallis.parse(config_class=Config)
+
     set_seed(config.train_seed, config.deterministic_torch)
 
     dataset = make_dataset_from_config(config)

@@ -132,8 +132,15 @@ def train(
     def _log(values: dict = None, step: int | None = None, log_kwargs: dict | None = {}):
         accelerator.log(values, step=step, log_kwargs=log_kwargs)
 
-    def _save_model(step: Union[int, str], infos: dict = None):
+    _save_idx = 0
+
+    def _save_model(step: Union[int, str] = None, infos: dict = None):
         if config.save_model:
+            if not step:
+                nonlocal _save_idx
+                step = _save_idx
+                _save_idx += 1
+
             accelerator.wait_for_everyone()
             accelerator.save_model(model, f"{config.exp_dir}/model_{step}")
 
@@ -209,15 +216,15 @@ def train(
             infos[f"eval/{step}"] = scores
 
             best_score.update(scores=scores, step=step)
+            _save_model(infos=infos)
 
         if (step % config.log.log_every) == 0:
             _log({"loss": loss.item(), "learning_rate": last_lr}, step=step)
 
-        _save_model(step, infos=infos)
-
         pbar.set_postfix_str(
             f"[S:{step}][L:{loss.item():.4f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}|->lr:{last_lr:.4f}"
         )
-        # accelerator.print(f"[S:{step}][L:{loss.item():.4f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}")
 
     accelerator.print(f"best scores: {best_score}")
+
+    return model, optimizer, scheduler, infos
