@@ -27,11 +27,6 @@ dataset_cls = {
     "d4rl_multiple": D4rlMultipleDataset,
 }
 
-run_fns = {
-    "train": run_autoregressive,
-    "baseline": run_baseline,
-}
-
 
 # note: cant set env seed when its venv
 def set_seed(seed: int, deterministic_torch: bool = False):
@@ -86,6 +81,18 @@ def make_dataset_from_config(config: Config, dataset_name: str = None):
     return dataset
 
 
+def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_spec=None, env=None, venv=None):
+    model, optimizer, scheduler, infos = run_autoregressive(
+        config, dataset, dataloader, accelerator, env_spec, env, venv
+    )
+
+    # setup finetune comparison
+    new_dataset = make_dataset_from_config(config, dataset_name=config.downstream)
+    dataset
+
+    train(model, dataloader=dataloader, config=config, accelerator=accelerator, env_spec=env_spec, env=env, venv=venv)
+
+
 def main():
     config = pyrallis.parse(config_class=Config)
 
@@ -113,6 +120,12 @@ def main():
     init_trackers(accelerator, config)
     # print config
     accelerator.print(config)
+
+    run_fns = {
+        "train": run_autoregressive,
+        "baseline": run_baseline,
+        "downstream": run_downstream,
+    }
 
     run_fns[config.cmd](config, dataset=dataset, accelerator=accelerator, env_spec=env_spec, env=env, venv=venv)
 

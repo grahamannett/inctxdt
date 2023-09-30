@@ -9,3 +9,4 @@ compare/
 experiments/
 wandb/
 tmp/
+secrets/
