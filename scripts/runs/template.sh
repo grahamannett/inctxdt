@@ -6,8 +6,14 @@ ENV=
 CONFIG_FILE=
 BATCH_SIZE=
 
-SEEDS=(1 2 3 4)
+# BELOW IS GENERIC
+NUM_SEEDS=1
+SEEDS=($(seq 1 $NUM_SEEDS))
 
-echo -e "RUNS: $HEADER\n--- --- ---"
+echo -e "RUNNING: \`$HEADER\` - SEEDS: $SEEDS\n---\n"
 
-./scripts/go.sh -e $ENV -c $CONFIG_FILE -b $BATCH_SIZE "$@"
+# iterate over seeds and run each with runs_entrypoint
+for SEED in "${SEEDS[@]}"
+do
+    ./scripts/runs_entrypoint.sh -e $ENV -c $CONFIG_FILE -b $BATCH_SIZE -s $SEED "$@"
+done

@@ -14,10 +14,13 @@ DOCKER_IMAGE_NAME=inctxdt/base:latest
 CLUSTER_SIF_DIR=/bsuhome/gannett/scratch/simages
 
 # first just build the docker image locally
+echo building docker image...
 docker build --build-arg="WANDB_API_KEY=$(cat secrets/wandb)" -t $DOCKER_IMAGE_NAME -f dockerfile .
 
 # build singularity image locally and put in the singularity images folder
+echo building singularity image...
 singularity build $SIF_FILE_BUILD_PATH docker-daemon://$DOCKER_IMAGE_NAME
 
 # transfer to borah cluster in the ~/scratch folder
+echo transfering file...
 scp $SIF_FILE_BUILD_PATH borah:$CLUSTER_SIF_DIR

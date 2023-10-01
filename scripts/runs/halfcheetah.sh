@@ -5,9 +5,14 @@ HEADER="halfcheetah runs"
 ENV=halfcheetah
 CONFIG_FILE=medium_v2
 BATCH_SIZE=256
+# how many times to run it, generally 1 for debugging, 5 for real runs
+NUM_SEEDS=1
+SEEDS=($(seq 1 $NUM_SEEDS))
 
-SEEDS=(1 2 3 4)
+echo -e "RUNNING: \`$HEADER\` - SEEDS: $SEEDS\n---\n"
 
-echo -e "RUNS: $HEADER\n--- --- ---"
-
-./scripts/go.sh -e $ENV -c $CONFIG_FILE -b $BATCH_SIZE "$@"
+# iterate over seeds and run each with runs_entrypoint
+for SEED in "${SEEDS[@]}"
+do
+    ./scripts/entrypoint_runs.sh -e $ENV -c $CONFIG_FILE -b $BATCH_SIZE -s $SEED "$@"
+done
