@@ -1,6 +1,7 @@
 #!/bin/bash
 
-ENV=halfcheetah
+# MAIN
+ENV=hopper
 ENV_CONFIG_FILE=medium_v2
 
 # EXTRA STUFF - MOSTLY GENERIC

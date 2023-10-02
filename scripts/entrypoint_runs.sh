@@ -14,6 +14,7 @@ DEVICE=0
 CONFIG_BASE=conf/corl/dt
 BATCH_SIZE=256
 WANDB_MODE=online
+DRY_RUN="${DRY_RUN:-false}"
 
 CMD_SEP_PREFIX="==> "
 CMD_SEPARATOR="--- --- ---"
@@ -66,7 +67,11 @@ function echo_and_run {
     echo -e "\n🍉 ⬇️  === $header ===\n"
     echo -e "$command"
     echo -e "\n---"
-    eval $command
+
+    if [ "$DRY_RUN" = false ] ; then
+      eval $command
+    fi
+    # eval $command
     _NUM_RUNS=$(( _NUM_RUNS + 1 ))
 }
 

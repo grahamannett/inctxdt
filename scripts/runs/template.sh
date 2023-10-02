@@ -1,19 +1,18 @@
 #!/bin/bash
 
-HEADER="template"
-
 ENV=
 CONFIG_FILE=
 BATCH_SIZE=
 
+# EXTRA STUFF - MOSTLY GENERIC
+BATCH_SIZE=256
+CONFIG_FILE="${CONFIG_FILE:-ENV_CONFIG_FILE}"
+HEADER=$ENV-$CONFIG_FILE
 # BELOW IS GENERIC
-NUM_SEEDS=1
-SEEDS=($(seq 1 $NUM_SEEDS))
+SEED="${SEED:-1}"
 
-echo -e "RUNNING: \`$HEADER\` - SEEDS: $SEEDS\n---\n"
+echo -e "RUNNING: \`$HEADER\`" | tr a-z A-Z
+echo -e "   -> SEED: $SEED"
+echo -e "   -> ARGS: $@\n---\n"
 
-# iterate over seeds and run each with runs_entrypoint
-for SEED in "${SEEDS[@]}"
-do
-    ./scripts/runs_entrypoint.sh -e $ENV -c $CONFIG_FILE -b $BATCH_SIZE -s $SEED "$@"
-done
+./scripts/entrypoint_runs.sh -e $ENV -c $CONFIG_FILE -b $BATCH_SIZE -s $SEED "$@"
