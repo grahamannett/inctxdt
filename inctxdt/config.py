@@ -1,6 +1,10 @@
 import uuid
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Union
+from dataclasses import asdict, dataclass, field
+from typing import Optional, Tuple, Union
+
+import yaml
+
+BASE_BATCH_SIZE: int = 256
 
 
 @dataclass
@@ -33,16 +37,6 @@ class CentroidConfig:
 
 
 @dataclass
-class EvalConfig:
-    model_dir: str = None
-    reward_scale: float = None
-
-    def __post_init__(self):
-        if self.reward_scale is None:
-            self.reward_scale = Config.reward_scale
-
-
-@dataclass
 class LogConfig:
     # init params
     name: str = None
@@ -70,6 +64,32 @@ class ModalEmbedConfig:
     def __post_init__(self):
         if self.tokenize_action and self.action_embed_class == "ActionEmbedding":
             raise ValueError("ActionEmbedding doesnt work if tokenzing actions")
+
+
+@dataclass
+class Downstream:
+    config_path: str = "conf/corl/dt/hopper/medium_v2.yaml"
+    dataset_type: str = "d4rl"
+    dataset_min_length: int = None
+
+    update_steps: int = 100_000
+    eval_every: int = 1_000
+    batch_size: int = BASE_BATCH_SIZE
+
+    _patch_states: bool = True
+    _patch_actions: bool = False
+
+    def load_config_path(self):
+        with open(self.config_path, "r") as file:
+            _yaml_config = yaml.safe_load(file)
+
+        for key, value in _yaml_config.items():
+            # only set values we didnt set otherwise it will override cli values
+            if not hasattr(self, key):
+                setattr(self, key, value)
+
+    def __post_init__(self):
+        pass
 
 
 @dataclass
@@ -106,10 +126,10 @@ class Config:
     exp_name: str = "latest"
     save_model: bool = False
 
-    update_steps: int = 100_000
+    update_steps: int = 25_000  # 100_000
     epochs: int = 1
     num_workers: int = 8
-    batch_size: int = 32
+    batch_size: int = BASE_BATCH_SIZE
     shuffle: bool = True
     n_batches: int = -1
 
@@ -128,6 +148,7 @@ class Config:
     modal_embed: ModalEmbedConfig = field(default_factory=ModalEmbedConfig)
     log: LogConfig = field(default_factory=LogConfig)
     centroids: CentroidConfig = field(default_factory=CentroidConfig)
+    downstream: Downstream = field(default_factory=Downstream)
 
     # optim
     learning_rate: float = 1e-4
@@ -136,10 +157,10 @@ class Config:
     warmup_steps: int = 1_000  # 10000
 
     # loss related
-    use_secondary_loss: bool = False
     loss_reduction: str = "none"  # "mean"
-    state_loss_scale: float = 0.1
-    rewards_loss_scale: float = 0.1
+    use_secondary_loss: bool = False
+    scale_state_loss: float = None  # 0.1
+    scale_rewards_loss: float = None  #  0.1
 
     clip_grad: Optional[float] = 0.25
 
@@ -157,17 +178,27 @@ class Config:
     def __post_init__(self):
         self._check_dataset()
 
-    def _check_dataset(self):
-        dataset_type = self.dataset_type.split("_")[0]
-        assert dataset_type in ["minari", "d4rl"], f"dataset_type: {dataset_type} not supported"
+        self.downstream.load_config_path()
 
-    def _get_dataset_type(self):
-        import minari
+        if self.use_secondary_loss:
+            assert self.scale_state_loss or self.scale_rewards_loss, "set state/rewards scale if using secondary loss"
 
-        if self.dataset_name in minari.list_remote_datasets():
-            return "minari"
+        # ammend the tags in log
+        for tag in self.env_name.split("-"):
+            if tag not in self.log.tags:
+                self.log.tags.append(tag)
 
-        return "d4rl"
+        if self.log.job_type and (self.log.job_type not in self.log.tags):
+            self.log.tags.append(self.log.job_type)
+
+    def __repr__(self):
+        output_str = ""
+        if self.debug:  # allow extra debug message to be printed
+            output_str += f"\n\n==>🤠|> {self.debug.upper()} <|🤠<==\n\n"
+
+        output_str += f"=== Config ===\n"
+        output_str += self.console_info
+        return output_str
 
     @property
     def exp_dir(self) -> str:
@@ -186,11 +217,30 @@ class Config:
     def use_accelerate(cls, accelerator) -> None:
         cls._accelerator = accelerator
 
-    def __repr__(self):
-        output_str = ""
-        if self.debug:  # allow extra debug message to be printed
-            output_str += f"\n\n==>🤠|> {self.debug.upper()} <|🤠<==\n\n"
+    def _check_dataset(self):
+        dataset_type = self.dataset_type.split("_")[0]
+        assert dataset_type in ["minari", "d4rl"], f"dataset_type: {dataset_type} not supported"
 
-        output_str += f"=== Config ===\n"
-        output_str += self.console_info
-        return output_str
+    def _get_dataset_type(self):
+        import minari
+
+        if self.dataset_name in minari.list_remote_datasets():
+            return "minari"
+
+        return "d4rl"
+
+    def setup_downstream(self, downstream: Downstream):
+        # Patching Config with the values from downstream
+        # use __dict__ over asdict since asdict only returns dataclass fields
+        for key, value in self.downstream.__dict__.items():
+            if key.startswith("_"):
+                print(f"Skipping {key}")
+                continue
+
+            if hasattr(self, key):
+                if getattr(self, key) != value:
+                    print(f"Overriding {key} with {value} - [OLD:`{getattr(self, key)}`]")
+                    setattr(self, key, value)
+            else:
+                print(f"Setting {key} to {value}")
+                setattr(self, key, value)

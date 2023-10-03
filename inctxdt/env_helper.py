@@ -25,7 +25,11 @@ class NormalizeObservation(gymnasium.ObservationWrapper):
         return out
 
 
-def get_env_gymnasium(env_name: str, config=None, venv: bool = True):
+def get_env_gymnasium(env_name: str, config=None, venv: bool = True, **kwargs):
+    mean = kwargs.get("mean", config.state_mean)
+    std = kwargs.get("std", config.state_std)
+    reward_scale = kwargs.get("reward_scale", config.reward_scale)
+
     base_env = gymnasium.make(env_name)
     base_obs = base_env.reset()[0]
 
@@ -40,8 +44,8 @@ def get_env_gymnasium(env_name: str, config=None, venv: bool = True):
     def fn():
         env = gymnasium.make(env_name)
         env = FlattenEnv(env, base_obs.shape) if needs_flatten else env
-        env = gymnasium.wrappers.TransformObservation(env, lambda obs: (obs - config.state_mean) / config.state_std)
-        env = gymnasium.wrappers.TransformReward(env, lambda rew: rew * config.reward_scale)
+        env = gymnasium.wrappers.TransformObservation(env, lambda obs: (obs - mean) / std)
+        env = gymnasium.wrappers.TransformReward(env, lambda rew: rew * reward_scale)
         return env
 
     base_env = fn()
@@ -56,9 +60,13 @@ def get_env_gymnasium(env_name: str, config=None, venv: bool = True):
     return fn, base_env, venv, obs_space, base_env.action_space
 
 
-def get_env_gym(env_name: str, config: Config, venv: bool = True):
+def get_env_gym(env_name: str, config: Config, venv: bool = True, **kwargs):
     import gym
     import d4rl
+
+    mean = kwargs.get("mean", config.state_mean)
+    std = kwargs.get("std", config.state_std)
+    reward_scale = kwargs.get("reward_scale", config.reward_scale)
 
     base_env = gym.make(env_name)
     base_obs = base_env.reset()
@@ -87,8 +95,8 @@ def get_env_gym(env_name: str, config: Config, venv: bool = True):
         env = gym.make(env_name)
         # not sure exactly but seemed like TransformObservation messed up stuff.
         # could be one of the other bugs fixed the issue i thought was this though.
-        env = NormalizeObservation(env, base_obs.shape, mean=config.state_mean, std=config.state_std)
-        env = NormalizeReward(env, scale=config.reward_scale)
+        env = NormalizeObservation(env, base_obs.shape, mean=mean, std=std)
+        env = NormalizeReward(env, scale=reward_scale)
 
         return env
 
@@ -110,7 +118,7 @@ _fn = {
 }
 
 
-def get_env(config, dataset=None, env_name=None, dataset_type=None):
+def get_env(config, dataset=None, env_name=None, dataset_type=None, **kwargs):
     env_name = env_name or getattr(dataset, "env_name", config.env_name)
 
     dataset_type = dataset_type or getattr(dataset, "_dataset_type", config.dataset_type)
@@ -118,19 +126,8 @@ def get_env(config, dataset=None, env_name=None, dataset_type=None):
     dataset_type = dataset_type.split("_")[0]  # might have _across or _multiple
 
     env_fn = _fn[dataset_type]
-    return env_fn(env_name, config)
+    return env_fn(env_name, config, **kwargs)
 
 
 #  probably need to remove
 _envs_registered = {}
-
-
-def _get_env_spec(env_name: str = None, dataset_name: str = None) -> tuple[int, int]:
-    assert env_name or dataset_name, "Must pass in either env_name or dataset_name"
-    if env_name in _envs_registered:
-        return _envs_registered[env_name]["action_space"], _envs_registered[env_name]["state_space"]
-
-    if dataset_name in _envs_registered:
-        return _envs_registered[dataset_name]["action_space"], _envs_registered[dataset_name]["state_space"]
-
-    assert False, f"env_name: {env_name} or dataset_name: {dataset_name} not found in registered envs"

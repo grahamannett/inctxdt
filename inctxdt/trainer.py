@@ -20,7 +20,7 @@ from inctxdt.models.model_output import ModelOutput
 from inctxdt.score_helpers import BestScore, EvalScore, EvalScores
 
 
-def default_optimizer(model, config):
+def default_optimizer(model, config, optimizer=None):
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config.learning_rate,
@@ -28,11 +28,15 @@ def default_optimizer(model, config):
         betas=config.betas,
     )
 
+    return optimizer
+
+
+def default_scheduler(optimizer, config):
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer,
         lambda steps: min((steps + 1) / config.warmup_steps, 1),
     )
-    return optimizer, scheduler
+    return scheduler
 
 
 def _secondary_loss(preds, targets, mask, scale_factor: float = 1.0):
@@ -86,12 +90,16 @@ def train(
     env_spec: EnvSpec = None,
     env: gymnasium.Env = None,
     venv: gymnasium.vector.SyncVectorEnv = None,
+    update_steps: int = None,
+    skip_log: bool = False,
 ):
     _save_suffix_idx = 0  #
     _main_proc = accelerator.is_local_main_process
 
-    if (optimizer is None) or (scheduler is None):
-        optimizer, scheduler = default_optimizer(model, config)
+    if not optimizer:
+        optimizer = default_optimizer(model, config)
+    if not scheduler:
+        scheduler = default_scheduler(optimizer, config)
 
     if _main_proc and config.save_model:
         makedirs(config.exp_dir, exist_ok=True)
@@ -130,7 +138,10 @@ def train(
         optimizer.step()
         scheduler.step()
 
-    def _log(values: dict = None, step: int | None = None, log_kwargs: dict | None = {}):
+    def _log(values: dict = None, step: int | None = None, log_kwargs: dict | None = {}) -> None:
+        if skip_log:
+            return
+
         accelerator.log(values, step=step, log_kwargs=log_kwargs)
 
     def _save_model(save_suffix: Union[int, str] = None, infos: dict = None):
@@ -189,9 +200,9 @@ def train(
     train_iter = iter(trainloader)
     _save_model(save_suffix="init")
 
-    pbar = trange(config.update_steps, desc=f"Training", disable=not _main_proc, leave=False)
+    pbar = trange(update_steps or config.update_steps, desc=f"Training", disable=not _main_proc, leave=False)
     best_score = BestScore()
-    infos = {}
+    infos = {"best": best_score}
 
     for step in pbar:
         model.train()
@@ -222,7 +233,7 @@ def train(
             _log({"loss": loss.item(), "learning_rate": last_lr}, step=step)
 
         pbar.set_postfix_str(
-            f"[S:{step}][L:{loss.item():.4f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}|->lr:{last_lr:.4f}"
+            f"[S:{step}][L:{loss.item():.3f}]|->eval:{eval_score:.2f}|->norm:{norm_score:.2f}|->lr:{last_lr:.3f}"
         )
 
     accelerator.print(f"best scores: {best_score}")

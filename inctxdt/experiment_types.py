@@ -70,7 +70,9 @@ def create_bin_edges(
     return [torch.from_numpy(b) for b in enc.bin_edges_]
 
 
-def run_autoregressive(config, dataset=None, dataloader=None, accelerator=None, env_spec=None, env=None, venv=None):
+def run_autoregressive(
+    config, dataset=None, dataloader=None, accelerator=None, env_spec=None, env=None, venv=None, model=None, **kwargs
+):
     assert dataset or dataloader, "either dataset or dataloader must be provided"
 
     dataloader = dataloader_from_dataset(dataset, dataloader, config, accelerator=accelerator)
@@ -95,27 +97,33 @@ def run_autoregressive(config, dataset=None, dataloader=None, accelerator=None, 
 
         config.modal_embed.token_size = config.modal_embed.num_bins * (len(bin_edges) * 2)
 
-    model = DecisionTransformer(
-        state_dim=env_spec.state_dim,
-        action_dim=env_spec.action_dim,
-        embedding_dim=config.embedding_dim,
-        num_layers=config.num_layers,
-        num_heads=config.num_heads,
-        attention_dropout=config.attention_dropout,
-        residual_dropout=config.residual_dropout,
-        embedding_dropout=config.embedding_dropout,
-        max_action=config.max_action,
-        seq_len=config.seq_len,
-        episode_len=config.episode_len,
-        env_spec=env_spec,
-        modal_embed=config.modal_embed,
-        discretizers=discretizers,
-    )
+    if not model:
+        model = DecisionTransformer(
+            state_dim=env_spec.state_dim,
+            action_dim=env_spec.action_dim,
+            embedding_dim=config.embedding_dim,
+            num_layers=config.num_layers,
+            num_heads=config.num_heads,
+            attention_dropout=config.attention_dropout,
+            residual_dropout=config.residual_dropout,
+            embedding_dropout=config.embedding_dropout,
+            max_action=config.max_action,
+            seq_len=config.seq_len,
+            episode_len=config.episode_len,
+            env_spec=env_spec,
+            modal_embed=config.modal_embed,
+            discretizers=discretizers,
+        )
 
     model, optimizer, scheduler, infos = train(
-        model, dataloader=dataloader, config=config, accelerator=accelerator, env_spec=env_spec, env=env, venv=venv
+        model,
+        dataloader=dataloader,
+        config=config,
+        accelerator=accelerator,
+        env_spec=env_spec,
+        env=env,
+        venv=venv,
+        **kwargs,
     )
 
     return model, optimizer, scheduler, infos
-
-

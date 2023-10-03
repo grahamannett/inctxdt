@@ -151,17 +151,18 @@ def venv_eval_rollout(
     # output sequential when actions are needed sequentially, i.e. for autoregressive models with single action output
     def _output_sequential(step, states, actions, returns, timesteps):
         for act_i in range(action_dim):
-            predicted_action = model(
+            output = model(
                 states=states[:, : step + 1][:, -seq_len:],
                 actions=actions[:, : step + 1][:, -seq_len:],
                 returns_to_go=returns[:, : step + 1][:, -seq_len:],
                 timesteps=timesteps[:, : step + 1][:, -seq_len:],
             )
 
-            if isinstance(predicted_action, ModelOutput):
-                predicted_action = predicted_action.logits
+            if isinstance(output, ModelOutput):
+                output = output.logits
+
             # output logits will increase until we hit seq len, so just take last values along dim 1
-            actions[:, step + 1, act_i] = predicted_action[:, -1, act_i]
+            actions[:, step + 1, act_i] = output[:, -1, act_i]
         return actions[:, : step + 1, :]
 
     def _output_normal(step, states, actions, returns, timesteps):
@@ -174,7 +175,8 @@ def venv_eval_rollout(
 
     output_fn = _output_sequential if output_sequential else _output_normal
 
-    for step in trange(max_episode_len, desc="Eval Rollout"):
+    pbar = trange(max_episode_len, desc="Eval Rollout")
+    for step in pbar:
         predicted_action = output_fn(step, states, actions, returns, timesteps)
 
         if isinstance(predicted_action, ModelOutput):
@@ -210,5 +212,9 @@ def venv_eval_rollout(
 
         if (dones == True).all():
             break
+
+        if (step % 100) == 0:
+            # i want to see the reward updating for debugger/tracking purposes
+            pbar.set_postfix_str(f"[REW:{venv_episode_return.mean().item():.1f}]")
 
     return venv_episode_return, venv_episode_len
