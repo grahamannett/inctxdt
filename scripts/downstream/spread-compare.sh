@@ -130,7 +130,7 @@ CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES python inctxdt/run.py --cmd=downstrea
     --num_layers=4 \
     --num_heads=4 \
     --modal_embed.per_action_encode=False \
-    --modal_embed.tokenize_action=True \
+    --modal_embed.tokenize_action=False \
     --modal_embed.action_embed_class=ActionEmbedding \
     --eval_output_sequential=False \
     --batch_size=$BATCH_SIZE \
