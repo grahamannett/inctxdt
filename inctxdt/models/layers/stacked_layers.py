@@ -147,14 +147,32 @@ class SequentialAction(BaseInputOutput):
         self.action_dim = action_dim
 
         # EACH MODALITY WILL GET A BRANCH TO EMBED IT
-        self.timestep_branch = nn.Embedding(episode_len * 2, self.embedding_dim)
-        self.state_branch = nn.Linear(state_dim, self.embedding_dim)
-        self.returns_branch = nn.Linear(1, self.embedding_dim)
+        self.branches = nn.ModuleDict(
+            {
+                "timesteps": nn.Embedding(episode_len * 2, self.embedding_dim),
+                "states": nn.Linear(state_dim, self.embedding_dim),
+                "returns": nn.Linear(1, self.embedding_dim),
+                "actions": ModalEmbCls[self.modal_embed_config.action_embed_class](
+                    action_dim=action_dim, embedding_dim=self.embedding_dim, **self.modal_embed_config.__dict__
+                ),
+            }
+        )
+        # self.timestep_branch = nn.Embedding(episode_len * 2, self.embedding_dim)
+        # self.state_branch = nn.Linear(state_dim, self.embedding_dim)
+        # self.returns_branch = nn.Linear(1, self.embedding_dim)
 
         # THIS IS HOW YOU WOULD MAKE ONE OF THEM DYNAMIC
-        self.action_branch = ModalEmbCls[self.modal_embed_config.action_embed_class](
-            action_dim=action_dim, embedding_dim=self.embedding_dim, **modal_embed_config.__dict__
-        )
+        # self.action_branch = ModalEmbCls[self.modal_embed_config.action_embed_class](
+        #     action_dim=action_dim, embedding_dim=self.embedding_dim, **modal_embed_config.__dict__
+        # )
+
+    def fix_branch(self, branch_name: str, *args, **kwargs):
+        if branch_name == "actions":
+            self.branches[branch_name] = ModalEmbCls[self.modal_embed_config.action_embed_class](
+                action_dim=kwargs["action_dim"], embedding_dim=self.embedding_dim, **self.modal_embed_config.__dict__
+            )
+        else:
+            self.branches[branch_name] = nn.Linear(*args, **kwargs)
 
     def forward_embed(
         self,
@@ -168,21 +186,29 @@ class SequentialAction(BaseInputOutput):
         bs, seq_len = states.shape[0], states.shape[1]
         self._batch_seq_len = seq_len
 
-        time_emb = self.timestep_branch(timesteps)
+        time_emb = self.branches["timesteps"](timesteps)
+        ret_emb = self.branches["returns"](returns_to_go.unsqueeze(-1))
+        state_emb = self.branches["states"](states)
+        act_emb = self.branches["actions"](actions)
 
-        ret_emb = self.returns_branch(returns_to_go.unsqueeze(-1))
-        state_emb = self.state_branch(states)
-        act_emb = self.action_branch(actions)
+        # time_emb = self.timestep_branch(timesteps)
+
+        # ret_emb = self.returns_branch(returns_to_go.unsqueeze(-1))
+        # state_emb = self.state_branch(states)
+        # act_emb = self.action_branch(actions)
 
         # add time emb, since time emb might be need to be repeated, we need to repeat it for each action
         ret_emb += time_emb
         state_emb += time_emb
 
-        act_emb += self.action_branch._add_time_emb(time_emb, actions)
+        act_emb += self.branches["actions"]._add_time_emb(time_emb, actions)
+        # act_emb += self.action_branch._add_time_emb(time_emb, actions)
 
         # this will stack the embeds such that they are [bs, seq_len, seq_types, embedding_dim]
         # note: if you concat along the dim that you create from stack, it will mess up the time dim
-        embeds = self.action_branch.combine_embeds(ret_emb, state_emb, act_emb)
+        # embeds = self.action_branch.combine_embeds(ret_emb, state_emb, act_emb)
+        embeds = self.branches["actions"].combine_embeds(ret_emb, state_emb, act_emb)
+
         embeds = embeds.reshape(bs, -1, self.embedding_dim)
 
         self.spread_dim = embeds.shape[1] // seq_len
@@ -197,4 +223,4 @@ class SequentialAction(BaseInputOutput):
         # x = x.reshape(bs, self._batch_seq_len, -1, self.embedding_dim)
 
         # 1 refers to state -> predict action
-        return self.action_branch.action_head(x)
+        return self.branches["actions"].action_head(x)

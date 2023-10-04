@@ -147,6 +147,14 @@ class DecisionTransformer(nn.Module):
             torch.nn.init.zeros_(module.bias)
             torch.nn.init.ones_(module.weight)
 
+    @classmethod
+    def create_discretizer(cls, dataset_name, arr, modal_embed_config: ModalEmbedConfig):
+        pass
+        # enc = KBinsDiscretizer(n_bins=num_bins, encode="ordinal", strategy=strategy)
+        # bin_edges = [
+
+        # ]
+
     def _uniform_discretizer(self, type_name: str, arr: torch.Tensor, n_bins: int = 1024, eps: float = 1e-6):
         hist = torch.histogram(arr.view(-1), bins=n_bins, range=(range[0] - eps, range[1] + eps))
         self.discretizers[type_name] = hist

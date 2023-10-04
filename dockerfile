@@ -58,4 +58,4 @@ RUN pip install -e .
 ENV WANDB_API_KEY=$WANDB_API_KEY
 
 # use cmd instead of entrypoint so we can use bash if needed for debugging
-CMD [ "/workspace/scripts/entrypoint.sh" ]
+# CMD [ "/workspace/scripts/entrypoint.sh" ]

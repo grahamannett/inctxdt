@@ -58,7 +58,7 @@ class ModalEmbedConfig:
     action_embed_class: str = "ActionEmbedding"
     num_bins: int = 3000
     strategy: str = "quantile"
-    per_action_encode: bool = True
+    per_action_encode: bool = False
     EmbedClass: str = "SequentialAction"
 
     def __post_init__(self):
@@ -78,6 +78,8 @@ class Downstream:
 
     _patch_states: bool = True
     _patch_actions: bool = False
+
+    skip_params: list[str] = field(default_factory=lambda: ["actions"])
 
     def load_config_path(self):
         with open(self.config_path, "r") as file:

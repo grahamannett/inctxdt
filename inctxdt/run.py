@@ -95,12 +95,15 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
     config.setup_downstream(config.downstream)
     downstream_dataset = make_dataset_from_config(config, dataset_name=config.downstream.env_name)
 
+    config.state_mean = downstream_dataset.state_mean
+    config.state_std = downstream_dataset.state_std
+
     _, downstream_env, downstream_venv, downstream_obs_space, downstream_act_space = get_env(
         config=config,
         dataset=downstream_dataset,
-        mean=downstream_dataset.state_mean,
-        std=downstream_dataset.state_std,
-        reward_scale=1.0,
+        # mean=downstream_dataset.state_mean,
+        # std=downstream_dataset.state_std,
+        # reward_scale=1.0,
     )
 
     downstream_env_spec = EnvSpec(
@@ -114,9 +117,14 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
     downstream_dataloader = dataloader_from_dataset(downstream_dataset, config=config, accelerator=accelerator)
 
     if config.downstream._patch_states:
-        model.embed_output_layers.state_branch = torch.nn.Linear(downstream_obs_space.shape[0], config.embedding_dim)
+        # model.embed_output_layers.state_branch = torch.nn.Linear(downstream_obs_space.shape[0], config.embedding_dim)
+        model.embed_output_layers.fix_branch("states", downstream_obs_space.shape[0], config.embedding_dim)
+    if config.downstream._patch_actions:
+        model.embed_output_layers.fix_branch("actions", action_dim=downstream_act_space.shape[0])
 
     accelerator.print("Downstream task...", downstream_env_spec)
+
+    # optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
 
     train(
         model,
@@ -126,8 +134,8 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
         env_spec=downstream_env_spec,
         env=downstream_env,
         venv=downstream_venv,
-        optimizer=optimizer,
-        scheduler=scheduler,
+        # optimizer=optimizer,
+        # scheduler=scheduler,
     )
 
 

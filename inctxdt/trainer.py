@@ -21,14 +21,28 @@ from inctxdt.score_helpers import BestScore, EvalScore, EvalScores
 
 
 def default_optimizer(model, config, optimizer=None):
+    skipped_names = []
+
+    if hasattr(config, "skip_params"):
+        params = []
+        for n, p in model.named_parameters():
+            if any([skip in n for skip in config.skip_params]):
+                skipped_names.append(n)
+                p.requires_grad_(False)
+            else:
+                params.append(p)
+
+    else:
+        params = [p for p in model.parameters()]
+
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        params,
         lr=config.learning_rate,
         weight_decay=config.weight_decay,
         betas=config.betas,
     )
 
-    return optimizer
+    return optimizer, skipped_names
 
 
 def default_scheduler(optimizer, config):
@@ -97,7 +111,9 @@ def train(
     _main_proc = accelerator.is_local_main_process
 
     if not optimizer:
-        optimizer = default_optimizer(model, config)
+        optimizer, skipped = default_optimizer(model, config)
+        if skipped:
+            accelerator.print("Skipped Param Groups:", skipped)
     if not scheduler:
         scheduler = default_scheduler(optimizer, config)
 
