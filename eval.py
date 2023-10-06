@@ -74,7 +74,7 @@ episode = None
 episode = dataset[0]
 
 layers_to_train = [
-    "embed_output_layers.state_emb",
+    "embed_paths.state_emb",
 ]
 dataloader = torch.utils.data.DataLoader(
     dataset,

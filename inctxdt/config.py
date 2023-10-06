@@ -28,6 +28,28 @@ class EnvSpec:
 
 
 @dataclass
+class PlotConfig:
+    n_rows: int = 2
+    n_columns: int = 3
+
+    plot_name: str = "default"
+
+    plot_title: str = None
+    plot_title_fontsize: int = 40
+    figsize: Tuple[int, int] = (20, 8)
+
+    subplot_title_fontsize: int = 36
+    subplot_xlabel_fontsize: int = 30
+    subplot_ylabel_fontsize: int = 30
+
+    # histogram plots
+    plot_all_actions: bool = False
+
+    use_subplot_titles: bool = False
+    subplot_titles: list[str] = field(default_factory=lambda: ["states", "actions", "rewards", "next_states"])
+
+
+@dataclass
 class CentroidConfig:
     n_clusters: int = 100
     mode: str = "cosine"
@@ -54,8 +76,11 @@ class LogConfig:
 
 @dataclass
 class ModalEmbedConfig:
-    tokenize_action: bool = False
+    tokenize_state: bool = False
+
+    #
     action_embed_class: str = "ActionEmbedding"
+    tokenize_action: bool = False
     num_bins: int = 3000
     strategy: str = "quantile"
     per_action_encode: bool = False
@@ -78,6 +103,7 @@ class Downstream:
 
     _patch_states: bool = True
     _patch_actions: bool = False
+    _reuse_optimizer: bool = False
 
     skip_params: list[str] = field(default_factory=lambda: ["actions"])
 
@@ -151,6 +177,7 @@ class Config:
     log: LogConfig = field(default_factory=LogConfig)
     centroids: CentroidConfig = field(default_factory=CentroidConfig)
     downstream: Downstream = field(default_factory=Downstream)
+    plot: PlotConfig = field(default_factory=PlotConfig)
 
     # optim
     learning_rate: float = 1e-4

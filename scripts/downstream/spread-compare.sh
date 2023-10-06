@@ -3,6 +3,8 @@
 # Set default values for variables
 ENV="${ENV:-hopper}"
 ENV_CONFIG_FILE="${ENV_CONFIG_FILE:-medium_v2}"
+
+PRETRAIN_CONFIG_PATH="${PRETRAIN_CONFIG_PATH:-'conf/corl/dt/halfcheetah/medium_v2.yaml'}"
 WANDB_MODE="${WANDB_MODE:-online}"
 PRETRAIN_STEPS="${PRETRAIN_STEPS:-10000}"
 DOWNSTREAM_STEPS="${DOWNSTREAM_STEPS:-100000}"
@@ -31,15 +33,15 @@ function run_downstream() {
     #   extra_arg: An extra argument to be added.
 
     local action_embed_class=$1
-    local tokenize_action=$2
-    local patch_actions=$3
-    local eval_output_sequential=$4
-    local job_type=$5
+    local job_type=$2
+    local tokenize_action=$3
+    local patch_actions=$4
+    local eval_output_sequential=$5
     local extra_arg=$6
 
     local cmd="CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES python inctxdt/run.py --cmd=downstream \
         --seed=$SEED --device=cuda \
-        --config_path=conf/corl/dt/halfcheetah/medium_v2.yaml \
+        --config_path=$PRETRAIN_CONFIG_PATH \
         --downstream.config_path=conf/corl/dt/$ENV/$ENV_CONFIG_FILE.yaml \
         --num_layers=4 \
         --num_heads=4 \
@@ -61,15 +63,15 @@ function run_downstream() {
 }
 
 # format is
-# run_downstream [action_embed_class]  [tokenize_action] [patch_actions] eval_output_sequential job_type extra_arg
+# run_downstream [action_embed_class]           [job_type]                              [tokenize_action] [patch_actions]   [eval_seq]  extra_arg
 # ---
-run_downstream "ActionTokenizedEmbedding" "True" "False" "False" "ActionTokenizedEmbedding"
-run_downstream "ActionTokenizedEmbedding" "True" "True" "False" "PatchedActionTokenizedEmbedding"
-run_downstream "ActionTokenizedSpreadEmbedding" "True" "True" "False" "PatchedActionTokenizedSpreadEmbedding"
-run_downstream "ActionTokenizedSpreadEmbedding" "True" "True" "True" "PatchedActionTokenizedSpreadEmbeddingSequential"
-run_downstream "ActionTokenizedSpreadEmbedding" "True" "False" "False" "ActionTokenizedSpreadEmbedding"
-run_downstream "ActionEmbedding" "False" "True" "False" "ReusedOptimPatchedActionEmbedding" "--downstream._reuse_optimizer=True"
-# if ActionEmbedding you need to patch actions
-# run_downstream "ActionEmbedding" "False" "False" "False" "ActionEmbedding" "--downstream._reuse_optimizer=True"
+run_downstream "ActionTokenizedEmbedding"       "ActionTokenizedEmbedding"                          "True"      "False"     "False"
+run_downstream "ActionTokenizedEmbedding"       "PatchedActionTokenizedEmbedding"                   "True"      "True"      "False"
+run_downstream "ActionTokenizedSpreadEmbedding" "PatchedActionTokenizedSpreadEmbedding"             "True"      "True"      "False"
+run_downstream "ActionTokenizedSpreadEmbedding" "PatchedActionTokenizedSpreadEmbeddingSequential"   "True"      "True"      "True"
+run_downstream "ActionTokenizedSpreadEmbedding" "ActionTokenizedSpreadEmbedding"                    "True"      "False"     "False"
+run_downstream "ActionEmbedding"                "PatchedActionEmbedding"                            "False"     "True"      "False" "--downstream._reuse_optimizer=False"
+run_downstream "ActionEmbedding"                "ReusedOptimPatchedActionEmbedding"                 "False"     "True"      "False" "--downstream._reuse_optimizer=True"
+
 
 

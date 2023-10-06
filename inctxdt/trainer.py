@@ -23,10 +23,10 @@ from inctxdt.score_helpers import BestScore, EvalScore, EvalScores
 def default_optimizer(model, config, optimizer=None):
     skipped_names = []
 
-    if hasattr(config, "skip_params"):
+    if skip_params := getattr(config, "skip_params", []):
         params = []
         for n, p in model.named_parameters():
-            if any([skip in n for skip in config.skip_params]):
+            if any([skip in n for skip in skip_params]):
                 skipped_names.append(n)
                 p.requires_grad_(False)
             else:

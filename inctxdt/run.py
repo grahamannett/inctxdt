@@ -117,14 +117,16 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
     downstream_dataloader = dataloader_from_dataset(downstream_dataset, config=config, accelerator=accelerator)
 
     if config.downstream._patch_states:
-        # model.embed_output_layers.state_branch = torch.nn.Linear(downstream_obs_space.shape[0], config.embedding_dim)
-        model.embed_output_layers.fix_branch("states", downstream_obs_space.shape[0], config.embedding_dim)
+        model.embed_paths.new_branch(
+            "states",
+            new_branch=torch.nn.Linear(in_features=downstream_obs_space.shape[0], out_features=config.embedding_dim),
+            optimizer=optimizer,
+        )
+
     if config.downstream._patch_actions:
-        model.embed_output_layers.fix_branch("actions", action_dim=downstream_act_space.shape[0])
+        model.embed_paths.new_branch("actions", action_dim=downstream_act_space.shape[0], optimizer=optimizer)
 
     accelerator.print("Downstream task...", downstream_env_spec)
-
-    # optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
 
     train(
         model,
@@ -134,8 +136,8 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
         env_spec=downstream_env_spec,
         env=downstream_env,
         venv=downstream_venv,
-        # optimizer=optimizer,
-        # scheduler=scheduler,
+        optimizer=optimizer if config.downstream._reuse_optimizer else None,
+        scheduler=scheduler if config.downstream._reuse_optimizer else None,
     )
 
 

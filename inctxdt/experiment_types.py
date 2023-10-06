@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 
 from inctxdt.batch import Collate
 from inctxdt.models.model import DecisionTransformer
+from inctxdt.models.modal_tokenizers import ModalTokenizers
 from inctxdt.trainer import train
 
 
@@ -78,24 +79,40 @@ def run_autoregressive(
     dataloader = dataloader_from_dataset(dataset, dataloader, config, accelerator=accelerator)
 
     # need to create discretization before creating model since we needs the vocab size which is probably action-dim*num_bins
-    discretizers = {}
+    modal_discretizers = ModalTokenizers(device=accelerator.device)
     if config.modal_embed.tokenize_action:
-        bin_edges = [
-            b.to(accelerator.device)
-            for b in create_bin_edges(
-                arr=np.concatenate([v["actions"] for v in dataset.dataset]),
-                num_bins=config.modal_embed.num_bins,
-                strategy=config.modal_embed.strategy,
-                per_action=config.modal_embed.per_action_encode,
-            )
-        ]
-        discretizers["actions"] = [
-            "bin_edges",
-            bin_edges,
-            [sum(len(bin_edges[i]) for i in range(b_i + 1)) for b_i in range(len(bin_edges))],
-        ]
+        data = np.concatenate([v["actions"] for v in dataset.dataset])
+        modal_discretizers.new_tokenizer(
+            "actions",
+            data,
+            num_bins=config.modal_embed.num_bins,
+            strategy=config.modal_embed.strategy,
+            per_column=config.modal_embed.per_action_encode,
+        )
+        config.modal_embed.token_size = modal_discretizers["actions"].token_size
 
-        config.modal_embed.token_size = config.modal_embed.num_bins * (len(bin_edges) * 2)
+        # delete
+        data = torch.from_numpy(data[0:10]).to(accelerator.device)
+        # modal_tokenizers.new_tokenizer(
+        #     "actions",
+        #     arr=np.concatenate([v["actions"] for v in dataset.dataset]),
+        #     num_bins=config.modal_embed.num_bins,
+        #     strategy=config.modal_embed.strategy,
+        #     per_action=config.modal_embed.per_action_encode,
+        # )
+        # bin_edges = [
+        #     b.to(accelerator.device)
+        #     for b in create_bin_edges(
+        #         arr=np.concatenate([v["actions"] for v in dataset.dataset]),
+        #     )
+        # ]
+        # discretizers["actions"] = [
+        #     "bin_edges",
+        #     bin_edges,
+        #     [sum(len(bin_edges[i]) for i in range(b_i + 1)) for b_i in range(len(bin_edges))],
+        # ]
+
+        # config.modal_embed.token_size = config.modal_embed.num_bins * (len(bin_edges) * 2)
 
     if not model:
         model = DecisionTransformer(
@@ -112,7 +129,7 @@ def run_autoregressive(
             episode_len=config.episode_len,
             env_spec=env_spec,
             modal_embed=config.modal_embed,
-            discretizers=discretizers,
+            discretizers=modal_discretizers if len(modal_discretizers) > 0 else None,
         )
 
     model, optimizer, scheduler, infos = train(

@@ -47,13 +47,14 @@ RUN python -c 'import gym; import d4rl'
 ADD conf /workspace/conf
 ADD inctxdt /workspace/inctxdt
 ADD scripts /workspace/scripts
-RUN chmod +x /workspace/scripts/*.sh
 
 
 
 ADD pyproject.toml /workspace/pyproject.toml
 RUN pip install -e .
 
+RUN chmod +x /workspace/scripts/*.sh && chmod +x /workspace/scripts/runs/*.sh
+RUN mkdir -p /workspace/output/logs
 # set keys for logging
 ENV WANDB_API_KEY=$WANDB_API_KEY
 

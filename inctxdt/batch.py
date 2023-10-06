@@ -114,6 +114,21 @@ class Collate:
         return batch
 
 
+# @dataclass
+class DataCollator:
+    def __call__(self, episode_list: List[EpisodeData]) -> Batch:
+        return Batch(
+            states=from_eps_with_pad(episode_list, "states"),
+            actions=from_eps_with_pad(episode_list, "actions"),
+            # rewards=from_eps_with_pad(episode_list, "rewards"),
+            returns_to_go=from_eps_with_pad(episode_list, "returns_to_go"),
+            timesteps=from_eps_with_pad(episode_list, "timesteps"),
+            mask=from_eps_with_pad(episode_list, "mask"),
+            ids=_items(episode_list, "id"),
+            batch_size=[len(episode_list)],
+        )
+
+
 # helper functions for padding and stacking.  Note:
 def from_eps_with_pad(eps, attr: str, batch_first: bool = True) -> torch.Tensor:
     return torch.nn.utils.rnn.pad_sequence([torch.from_numpy(getattr(x, attr)) for x in eps], batch_first=batch_first)
@@ -121,6 +136,10 @@ def from_eps_with_pad(eps, attr: str, batch_first: bool = True) -> torch.Tensor:
 
 def from_eps(eps: List[EpisodeData], attr: str) -> torch.Tensor:
     return torch.tensor([getattr(x, attr) for x in eps])
+
+
+def _items(eps: List[EpisodeData], attr: str) -> List:
+    return [getattr(x, attr) for x in eps]
 
 
 def return_fn_from_episodes(batch_first: bool = True, return_class: type = Batch):

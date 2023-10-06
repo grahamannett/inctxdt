@@ -1,28 +1,49 @@
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-
-from inctxdt.run import make_dataset_from_config, Config
 import pyrallis
+import seaborn as sns
+
+from inctxdt.config import Config, PlotConfig
+from inctxdt.run import make_dataset_from_config
+
+# change to seaborn
+
+mpl.rcParams.update(mpl.rcParamsDefault)
+plt.rcParams["text.usetex"] = True
+
+sns.set_theme()
+sns.set_style("dark")
 
 
-def plot_histogram(dataset, dataset_name, max_actions: int = 6):
+def plot_histogram(dataset, dataset_name, max_actions: int = 6, plot_config: PlotConfig = None):
     actions = np.concatenate([v["actions"] for v in dataset.dataset])
 
     num_actions = min(max_actions, actions.shape[-1])
 
-    n_rows, n_cols = 2, num_actions // 2
-    fig, axs = plt.subplots(n_rows, n_cols, figsize=(20, 8))
-    fig.suptitle(f"Distribution of Actions Before Tokenization for {dataset_name}", fontsize=20)
+    n_rows = plot_config.n_rows
+    n_cols = plot_config.n_columns if not plot_config.plot_all_actions else num_actions // n_rows
+
+    fig, axs = plt.subplots(n_rows, n_cols, figsize=plot_config.figsize)
+
+    plot_title = plot_config.plot_title or f"Distribution of Actions Before Tokenization for {dataset_name}"
+    fig.suptitle(plot_title, fontsize=plot_config.plot_title_fontsize)
 
     axs = axs.ravel()  # Flatten the axis array for easier indexing
     for i in range(len(axs)):
         axs[i].hist(actions[:, i], bins="auto", edgecolor="k", alpha=0.7)
-        axs[i].set_title(f"Values of Action {i+1}")
-        axs[i].set_xlabel("Count")
-        axs[i].set_ylabel("Frequency")
+
+        # set initial and then change if we pass
+        subplot_title = f"Action {i+1}"
+        if plot_config.use_subplot_titles and len(plot_config.subplot_titles) > i:
+            subplot_title = rf"{plot_config.subplot_titles[i]}"
+
+        axs[i].set_title(subplot_title, fontsize=plot_config.subplot_title_fontsize)
+        axs[i].set_xlabel("Count", fontsize=plot_config.subplot_xlabel_fontsize)
+        axs[i].set_ylabel("Frequency", fontsize=plot_config.subplot_ylabel_fontsize)
 
     plt.tight_layout()
-    fig.savefig(f"output/plots/histogram_{dataset_name}.png")
+    fig.savefig(f"output/plots/{plot_config.plot_name}.png")  # was {plot_config.plot_name}_{dataset_name}.png
 
 
 @pyrallis.wrap()
@@ -32,10 +53,10 @@ def main(config: Config):
     if isinstance(dataset_name, list):
         for name in dataset_name:
             dataset = make_dataset_from_config(config, name)
-            plot_histogram(dataset, name)
+            plot_histogram(dataset, name, plot_config=config.plot)
     else:
         dataset = make_dataset_from_config(config, dataset_name)
-        plot_histogram(dataset, dataset_name)
+        plot_histogram(dataset, dataset_name, plot_config=config.plot)
 
 
 if __name__ == "__main__":

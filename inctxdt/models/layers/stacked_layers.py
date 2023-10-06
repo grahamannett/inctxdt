@@ -157,22 +157,26 @@ class SequentialAction(BaseInputOutput):
                 ),
             }
         )
-        # self.timestep_branch = nn.Embedding(episode_len * 2, self.embedding_dim)
-        # self.state_branch = nn.Linear(state_dim, self.embedding_dim)
-        # self.returns_branch = nn.Linear(1, self.embedding_dim)
 
         # THIS IS HOW YOU WOULD MAKE ONE OF THEM DYNAMIC
         # self.action_branch = ModalEmbCls[self.modal_embed_config.action_embed_class](
         #     action_dim=action_dim, embedding_dim=self.embedding_dim, **modal_embed_config.__dict__
         # )
 
-    def fix_branch(self, branch_name: str, *args, **kwargs):
+    def new_branch(
+        self, branch_name: str, optimizer: torch.optim.Optimizer = None, new_branch: nn.Module = None, *args, **kwargs
+    ):
         if branch_name == "actions":
-            self.branches[branch_name] = ModalEmbCls[self.modal_embed_config.action_embed_class](
+            new_branch = ModalEmbCls[self.modal_embed_config.action_embed_class](
                 action_dim=kwargs["action_dim"], embedding_dim=self.embedding_dim, **self.modal_embed_config.__dict__
             )
-        else:
-            self.branches[branch_name] = nn.Linear(*args, **kwargs)
+        elif new_branch is None:
+            new_branch = nn.Linear(*args, **kwargs)
+
+        if optimizer:
+            optimizer.add_param_group({"params": new_branch.parameters()})
+
+        self.branches[branch_name] = new_branch
 
     def forward_embed(
         self,
