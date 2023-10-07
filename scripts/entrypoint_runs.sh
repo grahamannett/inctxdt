@@ -120,7 +120,7 @@ for job_name in "${!job_args[@]}"; do
   echo job_name: $job_name
   CMD_JOB_NAME=$job_name
   cmd_args="${job_args[$job_name]} --log.job_type=$CMD_JOB_NAME"
-  cmd=$(build_command $cmd_base $log_args $cmd_args)
+  cmd=$(build_command $cmd_base $cmd_args $log_args)
   echo_and_run "$cmd"
 done
 

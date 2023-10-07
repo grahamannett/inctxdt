@@ -1,5 +1,5 @@
 from dataclasses import asdict
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import torch
 from tensordict import TensorDict, tensorclass
@@ -161,3 +161,15 @@ def return_fn_from_episodes(batch_first: bool = True, return_class: type = Batch
         )
 
     return return_fn
+
+
+def make_data_iter_fn(config):
+    # functions that use accelerator/model/etc objects that are not passed in as args
+    def data_iter_fn(batch_iter) -> Tuple[int, Batch]:
+        for batch_idx, batch in batch_iter:
+            if (config.n_batches not in [-1, None]) and (batch_idx > config.n_batches):
+                return
+
+            yield batch_idx, batch
+
+    return data_iter_fn

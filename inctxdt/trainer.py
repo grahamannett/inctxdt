@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from accelerate import Accelerator
 from torch.utils.data import DataLoader
+from transformers import get_scheduler
 from tqdm.auto import tqdm, trange
 
 from inctxdt.batch import Batch
@@ -22,6 +23,7 @@ from inctxdt.score_helpers import BestScore, EvalScore, EvalScores
 
 def default_optimizer(model, config, optimizer=None):
     skipped_names = []
+    params = model.parameters()
 
     if skip_params := getattr(config, "skip_params", []):
         params = []
@@ -32,8 +34,8 @@ def default_optimizer(model, config, optimizer=None):
             else:
                 params.append(p)
 
-    else:
-        params = [p for p in model.parameters()]
+    # else:
+    # params = [p for p in model.parameters()]
 
     optimizer = torch.optim.AdamW(
         params,
@@ -53,6 +55,15 @@ def default_scheduler(optimizer, config):
     return scheduler
 
 
+# def default_scheduler(optimizer, config):
+#     return get_scheduler(
+#         name=config.scheduler_type,
+#         optimizer=optimizer,
+#         num_warmup_steps=config.warmup_steps,
+#         num_training_steps=config.update_steps,
+#     )
+
+
 def _secondary_loss(preds, targets, mask, scale_factor: float = 1.0):
     loss = nn.functional.mse_loss(preds, targets.detach(), reduction="none")
     if mask is not None:
@@ -68,10 +79,8 @@ def get_loss(model_output: ModelOutput, batch: Batch, config: Config = None) -> 
     if pred.shape != actions.shape:
         pred = pred.squeeze()
 
-    # # commented out atm because loss not similar to baseline
-    # if pred.shape != actions.shape:
-    #     if pred.shape[-1] != actions.shape[-1]:
-    #         pred = pred[..., : actions.shape[-1]]
+    if pred.shape != actions.shape:
+        raise ValueError(f"pred shape {pred.shape} != actions shape {actions.shape} probably need to debug")
 
     loss = nn.functional.mse_loss(pred, actions.detach(), reduction="none")
     loss = (loss * mask.unsqueeze(-1)).mean()
@@ -105,7 +114,10 @@ def train(
     env: gymnasium.Env = None,
     venv: gymnasium.vector.SyncVectorEnv = None,
     update_steps: int = None,
+    # allow skipping for downstream
     skip_log: bool = False,
+    skip_eval: bool = False,
+    reset_scheduler: bool = False,
 ):
     _save_suffix_idx = 0  #
     _main_proc = accelerator.is_local_main_process
@@ -114,7 +126,8 @@ def train(
         optimizer, skipped = default_optimizer(model, config)
         if skipped:
             accelerator.print("Skipped Param Groups:", skipped)
-    if not scheduler:
+
+    if reset_scheduler or (scheduler is None):
         scheduler = default_scheduler(optimizer, config)
 
     if _main_proc and config.save_model:
@@ -136,14 +149,6 @@ def train(
         optimizer,
         scheduler,
     )
-
-    # functions that use accelerator/model/etc objects that are not passed in as args
-    def data_iter_fn(batch_iter) -> Tuple[int, Batch]:
-        for batch_idx, batch in batch_iter:
-            if (config.n_batches not in [-1, None]) and (batch_idx > config.n_batches):
-                return
-
-            yield batch_idx, batch
 
     def post_get_loss(loss):
         optimizer.zero_grad()
@@ -185,6 +190,9 @@ def train(
         return eval_score, eval_score_std, norm_score, norm_score_std
 
     def eval_fn(step) -> dict:
+        if skip_eval:
+            return None
+
         scores = EvalScores()
 
         for target_return in config.target_returns:
@@ -218,6 +226,7 @@ def train(
 
     pbar = trange(update_steps or config.update_steps, desc=f"Training", disable=not _main_proc, leave=False)
     best_score = BestScore()
+    eval_score, norm_score = -1, -1  # -1 for both of these incase we are skipping eval
     infos = {"best": best_score}
 
     for step in pbar:
@@ -237,7 +246,7 @@ def train(
         last_lr = scheduler.get_last_lr()[0]
 
         # eval
-        if (step % config.eval_every) == 0:
+        if ((step % config.eval_every) == 0) and (not skip_eval):
             scores: EvalScores = eval_fn(step)
             eval_score, norm_score = scores.mean_eval_score, scores.mean_normalized_score
             infos[f"eval/{step}"] = scores

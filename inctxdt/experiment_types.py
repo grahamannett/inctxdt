@@ -91,29 +91,6 @@ def run_autoregressive(
         )
         config.modal_embed.token_size = modal_discretizers["actions"].token_size
 
-        # delete
-        data = torch.from_numpy(data[0:10]).to(accelerator.device)
-        # modal_tokenizers.new_tokenizer(
-        #     "actions",
-        #     arr=np.concatenate([v["actions"] for v in dataset.dataset]),
-        #     num_bins=config.modal_embed.num_bins,
-        #     strategy=config.modal_embed.strategy,
-        #     per_action=config.modal_embed.per_action_encode,
-        # )
-        # bin_edges = [
-        #     b.to(accelerator.device)
-        #     for b in create_bin_edges(
-        #         arr=np.concatenate([v["actions"] for v in dataset.dataset]),
-        #     )
-        # ]
-        # discretizers["actions"] = [
-        #     "bin_edges",
-        #     bin_edges,
-        #     [sum(len(bin_edges[i]) for i in range(b_i + 1)) for b_i in range(len(bin_edges))],
-        # ]
-
-        # config.modal_embed.token_size = config.modal_embed.num_bins * (len(bin_edges) * 2)
-
     if not model:
         model = DecisionTransformer(
             state_dim=env_spec.state_dim,

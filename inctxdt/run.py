@@ -12,7 +12,8 @@ import wandb
 from inctxdt.config import Config, EnvSpec
 from inctxdt.d4rl_datasets import D4rlAcrossEpisodeDataset, D4rlDataset, D4rlMultipleDataset
 from inctxdt.env_helper import get_env
-from inctxdt.experiment_types import dataloader_from_dataset, run_autoregressive, run_baseline, train
+from inctxdt.experiment_types import dataloader_from_dataset, run_autoregressive, run_baseline
+from inctxdt.trainer import train, default_scheduler, default_optimizer
 from inctxdt.minari_datasets import AcrossEpisodeDataset, MinariDataset, MultipleMinariDataset
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -86,7 +87,16 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
     # run original training
 
     model, optimizer, scheduler, infos = run_autoregressive(
-        config, dataset, dataloader, accelerator, env_spec, env, venv, skip_log=True
+        config,
+        dataset,
+        dataloader,
+        accelerator,
+        env_spec,
+        env,
+        venv,
+        # args passed into train()
+        skip_log=True,
+        skip_eval=True,
     )
 
     accelerator.print("Pre-training done with best", infos["best"])
@@ -101,9 +111,6 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
     _, downstream_env, downstream_venv, downstream_obs_space, downstream_act_space = get_env(
         config=config,
         dataset=downstream_dataset,
-        # mean=downstream_dataset.state_mean,
-        # std=downstream_dataset.state_std,
-        # reward_scale=1.0,
     )
 
     downstream_env_spec = EnvSpec(
@@ -116,15 +123,33 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
 
     downstream_dataloader = dataloader_from_dataset(downstream_dataset, config=config, accelerator=accelerator)
 
-    if config.downstream._patch_states:
-        model.embed_paths.new_branch(
+    if config.downstream.patch_states:
+        states_branch = model.embed_paths.new_branch(
             "states",
             new_branch=torch.nn.Linear(in_features=downstream_obs_space.shape[0], out_features=config.embedding_dim),
-            optimizer=optimizer,
+            optimizer=optimizer if config.downstream.update_optim_states else None,
         )
 
-    if config.downstream._patch_actions:
-        model.embed_paths.new_branch("actions", action_dim=downstream_act_space.shape[0], optimizer=optimizer)
+    if config.downstream.patch_actions:
+        actions_branch = model.embed_paths.new_branch(
+            "actions",
+            action_dim=downstream_act_space.shape[0],
+            optimizer=optimizer if config.downstream.update_optim_actions else None,
+        )
+
+    if config.downstream.reuse_optim == False:
+        optimizer = None
+        scheduler = None
+
+    if config.downstream.optim_only_patched:
+        optimizer = torch.optim.AdamW(
+            list(states_branch.parameters()) + list(actions_branch.parameters()),
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay,
+            betas=config.betas,
+        )
+
+        scheduler = default_scheduler(optimizer, config)
 
     accelerator.print("Downstream task...", downstream_env_spec)
 
@@ -136,8 +161,9 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
         env_spec=downstream_env_spec,
         env=downstream_env,
         venv=downstream_venv,
-        optimizer=optimizer if config.downstream._reuse_optimizer else None,
-        scheduler=scheduler if config.downstream._reuse_optimizer else None,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        reset_scheduler=config.downstream.reset_sched,
     )
 
 

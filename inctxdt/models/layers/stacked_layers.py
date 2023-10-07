@@ -74,8 +74,8 @@ class ActionTokenizedSpreadEmbedding(BaseActionEmbedding):
         self.max_num_actions = max_num_actions
 
         self.action_emb = nn.Embedding(token_size, embedding_dim)
-        self._action_head = nn.Sequential(nn.Linear(self.embedding_dim, 1), nn.Tanh())
         self.action_pos_emb = nn.Parameter(torch.rand(self.max_num_actions, self.embedding_dim))
+        self._action_head = nn.Sequential(nn.Linear(self.embedding_dim, 1), nn.Tanh())
 
     def _add_time_emb(self, time_emb: torch.Tensor, tokens: torch.Tensor, **kwargs) -> torch.Tensor:
         # NOTE: cant decide if i should use self.action_dim or pass x in
@@ -98,7 +98,7 @@ class ActionTokenizedSpreadEmbedding(BaseActionEmbedding):
         x = self.action_emb(x)
 
         # add the action pos emb before spreading out
-        x += self.action_pos_emb[: x.shape[-2], :]
+        # x += self.action_pos_emb[: x.shape[-2], :]
         return x
 
     def action_head(self, x: torch.Tensor, **kwargs):
@@ -110,7 +110,8 @@ class ActionTokenizedSpreadEmbedding(BaseActionEmbedding):
         # possibly you could do this without spreading the act_emb
         #  such that you just cat them BUT! IT PROBABLY WILL MESS UP THE TIME DIM
         # not sure which is quicker between what is below and -> torch.cat([torch.stack([ret_emb, state_emb], dim=2), act_emb], dim=2)
-        embeds = torch.stack([ret_emb, state_emb] + [act_emb[..., i, :] for i in range(act_emb.shape[-2])], dim=2)
+        # embeds = torch.stack([ret_emb, state_emb] + [act_emb[..., i, :] for i in range(act_emb.shape[-2])], dim=2)
+        embeds = torch.cat([torch.stack([ret_emb, state_emb], dim=2), act_emb], dim=2)
         return embeds
 
 
@@ -146,13 +147,14 @@ class SequentialAction(BaseInputOutput):
         self.state_dim = state_dim
         self.action_dim = action_dim
 
+        ActionModule = ModalEmbCls[self.modal_embed_config.action_embed_class]
         # EACH MODALITY WILL GET A BRANCH TO EMBED IT
         self.branches = nn.ModuleDict(
             {
                 "timesteps": nn.Embedding(episode_len * 2, self.embedding_dim),
                 "states": nn.Linear(state_dim, self.embedding_dim),
                 "returns": nn.Linear(1, self.embedding_dim),
-                "actions": ModalEmbCls[self.modal_embed_config.action_embed_class](
+                "actions": ActionModule(
                     action_dim=action_dim, embedding_dim=self.embedding_dim, **self.modal_embed_config.__dict__
                 ),
             }
@@ -165,7 +167,7 @@ class SequentialAction(BaseInputOutput):
 
     def new_branch(
         self, branch_name: str, optimizer: torch.optim.Optimizer = None, new_branch: nn.Module = None, *args, **kwargs
-    ):
+    ) -> nn.Module:
         if branch_name == "actions":
             new_branch = ModalEmbCls[self.modal_embed_config.action_embed_class](
                 action_dim=kwargs["action_dim"], embedding_dim=self.embedding_dim, **self.modal_embed_config.__dict__
@@ -174,9 +176,12 @@ class SequentialAction(BaseInputOutput):
             new_branch = nn.Linear(*args, **kwargs)
 
         if optimizer:
+            breakpoint()
             optimizer.add_param_group({"params": new_branch.parameters()})
 
         self.branches[branch_name] = new_branch
+
+        return new_branch
 
     def forward_embed(
         self,
@@ -190,10 +195,15 @@ class SequentialAction(BaseInputOutput):
         bs, seq_len = states.shape[0], states.shape[1]
         self._batch_seq_len = seq_len
 
-        time_emb = self.branches["timesteps"](timesteps)
-        ret_emb = self.branches["returns"](returns_to_go.unsqueeze(-1))
-        state_emb = self.branches["states"](states)
-        act_emb = self.branches["actions"](actions)
+        # time_emb = self.branches["timesteps"](timesteps)
+        # ret_emb = self.branches["returns"](returns_to_go.unsqueeze(-1))
+        # state_emb = self.branches["states"](states)
+        # act_emb = self.branches["actions"](actions)
+
+        time_emb = self.branches.timesteps(timesteps)
+        ret_emb = self.branches.returns(returns_to_go.unsqueeze(-1))
+        state_emb = self.branches.states(states)
+        act_emb = self.branches.actions(actions)
 
         # time_emb = self.timestep_branch(timesteps)
 
@@ -205,13 +215,14 @@ class SequentialAction(BaseInputOutput):
         ret_emb += time_emb
         state_emb += time_emb
 
-        act_emb += self.branches["actions"]._add_time_emb(time_emb, actions)
+        # act_emb += self.branches["actions"]._add_time_emb(time_emb, actions)
+        act_emb += self.branches.actions._add_time_emb(time_emb, actions)
         # act_emb += self.action_branch._add_time_emb(time_emb, actions)
 
         # this will stack the embeds such that they are [bs, seq_len, seq_types, embedding_dim]
         # note: if you concat along the dim that you create from stack, it will mess up the time dim
         # embeds = self.action_branch.combine_embeds(ret_emb, state_emb, act_emb)
-        embeds = self.branches["actions"].combine_embeds(ret_emb, state_emb, act_emb)
+        embeds = self.branches.actions.combine_embeds(ret_emb, state_emb, act_emb)
 
         embeds = embeds.reshape(bs, -1, self.embedding_dim)
 

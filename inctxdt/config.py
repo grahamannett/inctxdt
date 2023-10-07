@@ -101,9 +101,14 @@ class Downstream:
     eval_every: int = 1_000
     batch_size: int = BASE_BATCH_SIZE
 
-    _patch_states: bool = True
-    _patch_actions: bool = False
-    _reuse_optimizer: bool = False
+    optim_only_patched: bool = False
+    patch_states: bool = True
+    patch_actions: bool = False
+    reuse_optim: bool = False
+    reset_sched: bool = False
+
+    update_optim_states: bool = False
+    update_optim_actions: bool = False
 
     skip_params: list[str] = field(default_factory=lambda: ["actions"])
 
@@ -184,6 +189,7 @@ class Config:
     betas: Tuple[float, float] = (0.9, 0.999)
     weight_decay: float = 1e-4
     warmup_steps: int = 1_000  # 10000
+    scheduler_type: str = "cosine"
 
     # loss related
     loss_reduction: str = "none"  # "mean"
@@ -215,7 +221,13 @@ class Config:
         # ammend the tags in log
         for tag in self.env_name.split("-"):
             if tag not in self.log.tags:
-                self.log.tags.append(tag)
+                self.log.tags.append(tag.lower())
+
+        # job type should be TagsThat-AreSeperatedBy-Dashes
+        if self.log.job_type:
+            for tag in self.log.job_type.split("-"):
+                if tag not in self.log.tags:
+                    self.log.tags.append(tag.lower())
 
         if self.log.job_type and (self.log.job_type not in self.log.tags):
             self.log.tags.append(self.log.job_type)

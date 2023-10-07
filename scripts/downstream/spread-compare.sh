@@ -51,7 +51,7 @@ function run_downstream() {
         --eval_output_sequential=$eval_output_sequential \
         --batch_size=$BATCH_SIZE \
         --update_steps=$PRETRAIN_STEPS \
-        --downstream._patch_actions=$patch_actions \
+        --downstream.patch_actions=$patch_actions \
         --log.mode=$WANDB_MODE \
         --log.group=$GROUP \
         --log.job_type=$job_type \
@@ -70,8 +70,8 @@ run_downstream "ActionTokenizedEmbedding"       "PatchedActionTokenizedEmbedding
 run_downstream "ActionTokenizedSpreadEmbedding" "PatchedActionTokenizedSpreadEmbedding"             "True"      "True"      "False"
 run_downstream "ActionTokenizedSpreadEmbedding" "PatchedActionTokenizedSpreadEmbeddingSequential"   "True"      "True"      "True"
 run_downstream "ActionTokenizedSpreadEmbedding" "ActionTokenizedSpreadEmbedding"                    "True"      "False"     "False"
-run_downstream "ActionEmbedding"                "PatchedActionEmbedding"                            "False"     "True"      "False" "--downstream._reuse_optimizer=False"
-run_downstream "ActionEmbedding"                "ReusedOptimPatchedActionEmbedding"                 "False"     "True"      "False" "--downstream._reuse_optimizer=True"
+run_downstream "ActionEmbedding"                "PatchedActionEmbedding"                            "False"     "True"      "False" "--downstream.reuse_optimizer=False"
+run_downstream "ActionEmbedding"                "ReusedOptimPatchedActionEmbedding"                 "False"     "True"      "False" "--downstream.reuse_optimizer=True"
 
 
 
