@@ -46,6 +46,7 @@ class Tokenizer:
 
         token_offset = 0
         feature_bin = self.bin_edges[0]
+
         for jj in range(x.shape[-1]):
             if self.per_column:
                 feature_bin = self.bin_edges[jj]
@@ -78,6 +79,9 @@ class ModalTokenizers:
         tokenizer = Tokenizer(num_bins=num_bins, strategy=strategy, per_column=per_column)
         tokenizer.create(data, device=self.device)
         self.tokenizers[modal] = tokenizer
+
+    def __getattr__(self, modal: str):
+        return self.tokenizers[modal]
 
 
 class OldModalTokenizers:

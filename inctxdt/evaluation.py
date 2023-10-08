@@ -1,15 +1,19 @@
+import contextlib
 from typing import Any, Dict, Tuple
 
-import gymnasium
 import numpy as np
 import torch
-from gym.vector import VectorEnv
 from tqdm.auto import trange
 
 from inctxdt.config import EnvSpec
 from inctxdt.episode_data import EpisodeData
 from inctxdt.models.model import DecisionTransformer
 from inctxdt.models.model_output import ModelOutput
+
+with contextlib.redirect_stdout(None):
+    with contextlib.redirect_stderr(None):
+        import gymnasium
+        from gym.vector import VectorEnv
 
 
 def fix_obs_dict(obs: Dict[str, np.array] | np.array) -> np.array:

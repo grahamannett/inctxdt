@@ -8,7 +8,7 @@ from inctxdt.models.layers.base_layers import BaseInputOutput, OriginalActionHea
 
 
 class BaseModalEmbedding(nn.Module):
-    def _add_time_emb(self, time_emb: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+    def add_time_emb(self, time_emb: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         return time_emb
 
 
@@ -77,10 +77,28 @@ class ActionTokenizedSpreadEmbedding(BaseActionEmbedding):
         self.action_pos_emb = nn.Parameter(torch.rand(self.max_num_actions, self.embedding_dim))
         self._action_head = nn.Sequential(nn.Linear(self.embedding_dim, 1), nn.Tanh())
 
-    def _add_time_emb(self, time_emb: torch.Tensor, tokens: torch.Tensor, **kwargs) -> torch.Tensor:
+    def add_time_emb(self, time_emb: torch.Tensor, tokens: torch.Tensor, **kwargs) -> torch.Tensor:
         # NOTE: cant decide if i should use self.action_dim or pass x in
         # repeat time emb along action dim so that it is [bs, seq_len, action_dim, emb_dim]
         return time_emb.unsqueeze(-2).repeat_interleave(tokens.shape[-1], dim=2)
+        # return time_emb.repeat_interleave(tokens.shape[-1], dim=1)
+
+    def combine_embeds(
+        self, ret_emb: torch.Tensor, state_emb: torch.Tensor, act_emb: torch.Tensor, **kwargs
+    ) -> torch.Tensor:
+        # possibly you could do this without spreading the act_emb
+        #  such that you just cat them BUT! IT PROBABLY WILL MESS UP THE TIME DIM
+        # not sure which is quicker between what is below and -> torch.cat([torch.stack([ret_emb, state_emb], dim=2), act_emb], dim=2)
+        embeds = torch.stack([ret_emb, state_emb] + [act_emb[..., i, :] for i in range(act_emb.shape[-2])], dim=2)
+        return embeds
+        # versus what was here before: embeds = torch.cat([torch.stack([ret_emb, state_emb], dim=2), act_emb], dim=2)
+        # return embeds
+
+        # act_emb = act_emb.reshape(
+        #     act_emb.shape[0], state_emb.shape[1], -1, self.embedding_dim
+        # )  # [bs, seq_len, action_dim, emb_dim]
+        # embeds = torch.cat([torch.stack([ret_emb, state_emb], dim=2), act_emb], dim=2)
+        # return embeds
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # put all actions in the time dim
@@ -96,23 +114,15 @@ class ActionTokenizedSpreadEmbedding(BaseActionEmbedding):
         # TODO: fix time embedding, this isnt correct but just refactoring
         # not storing n_steps, action_dim (ie x.shape[1], x.shape[2]) because want to avoid updating those values but it might be quicker than passing in a
         x = self.action_emb(x)
+        return x
+        # x = x.reshape(x.shape[0], -1, self.embedding_dim)  # [bs, seq_len * action_dim, emb_dim]
 
         # add the action pos emb before spreading out
         # x += self.action_pos_emb[: x.shape[-2], :]
-        return x
 
     def action_head(self, x: torch.Tensor, **kwargs):
+        # return self._action_head(x[:, :, 1:-1, :]).squeeze(-1)
         return self._action_head(x[:, :, 1:-1, :]).squeeze(-1)
-
-    def combine_embeds(
-        self, ret_emb: torch.Tensor, state_emb: torch.Tensor, act_emb: torch.Tensor, **kwargs
-    ) -> torch.Tensor:
-        # possibly you could do this without spreading the act_emb
-        #  such that you just cat them BUT! IT PROBABLY WILL MESS UP THE TIME DIM
-        # not sure which is quicker between what is below and -> torch.cat([torch.stack([ret_emb, state_emb], dim=2), act_emb], dim=2)
-        # embeds = torch.stack([ret_emb, state_emb] + [act_emb[..., i, :] for i in range(act_emb.shape[-2])], dim=2)
-        embeds = torch.cat([torch.stack([ret_emb, state_emb], dim=2), act_emb], dim=2)
-        return embeds
 
 
 ModalEmbCls = {
@@ -160,11 +170,6 @@ class SequentialAction(BaseInputOutput):
             }
         )
 
-        # THIS IS HOW YOU WOULD MAKE ONE OF THEM DYNAMIC
-        # self.action_branch = ModalEmbCls[self.modal_embed_config.action_embed_class](
-        #     action_dim=action_dim, embedding_dim=self.embedding_dim, **modal_embed_config.__dict__
-        # )
-
     def new_branch(
         self, branch_name: str, optimizer: torch.optim.Optimizer = None, new_branch: nn.Module = None, *args, **kwargs
     ) -> nn.Module:
@@ -195,11 +200,6 @@ class SequentialAction(BaseInputOutput):
         bs, seq_len = states.shape[0], states.shape[1]
         self._batch_seq_len = seq_len
 
-        # time_emb = self.branches["timesteps"](timesteps)
-        # ret_emb = self.branches["returns"](returns_to_go.unsqueeze(-1))
-        # state_emb = self.branches["states"](states)
-        # act_emb = self.branches["actions"](actions)
-
         time_emb = self.branches.timesteps(timesteps)
         ret_emb = self.branches.returns(returns_to_go.unsqueeze(-1))
         state_emb = self.branches.states(states)
@@ -207,17 +207,12 @@ class SequentialAction(BaseInputOutput):
 
         # time_emb = self.timestep_branch(timesteps)
 
-        # ret_emb = self.returns_branch(returns_to_go.unsqueeze(-1))
-        # state_emb = self.state_branch(states)
-        # act_emb = self.action_branch(actions)
-
         # add time emb, since time emb might be need to be repeated, we need to repeat it for each action
         ret_emb += time_emb
         state_emb += time_emb
 
-        # act_emb += self.branches["actions"]._add_time_emb(time_emb, actions)
-        act_emb += self.branches.actions._add_time_emb(time_emb, actions)
-        # act_emb += self.action_branch._add_time_emb(time_emb, actions)
+        # act_emb += self.branches["actions"].add_time_emb(time_emb, actions)
+        act_emb += self.branches.actions.add_time_emb(time_emb, actions)
 
         # this will stack the embeds such that they are [bs, seq_len, seq_types, embedding_dim]
         # note: if you concat along the dim that you create from stack, it will mess up the time dim

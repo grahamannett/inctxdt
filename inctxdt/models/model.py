@@ -145,12 +145,6 @@ class DecisionTransformer(nn.Module):
             torch.nn.init.zeros_(module.bias)
             torch.nn.init.ones_(module.weight)
 
-    # @classmethod
-    # def create_discretizer(cls, dataset_name, arr, modal_embed_config: ModalEmbedConfig):
-    #     pass
-
-    # def set_discretizer(self, type_name: str, enc: torch.Tensor) -> None:
-
     def forward(
         self,
         states: torch.Tensor,  # [batch_size, seq_len, state_dim]
@@ -164,7 +158,7 @@ class DecisionTransformer(nn.Module):
         bs, seq_len = states.shape[0], states.shape[1]
 
         if self.modal_embed_config.tokenize_action:
-            actions = self.discretizers["actions"](actions)
+            actions = self.discretizers.actions(actions)
 
         # sequence should be:
         #   [batch_size, seq_len * spread_dim, embedding_dim]
@@ -188,7 +182,10 @@ class DecisionTransformer(nn.Module):
             out = block(out, padding_mask=padding_mask)
 
         # norm and reshape to [batch_size, seq_len, spread_dim, embedding_dim]
-        out = self.out_norm(out).reshape(bs, seq_len, spread_dim, self.embedding_dim)
+        out = self.out_norm(out)
+        out = out.reshape(
+            bs, seq_len, spread_dim, self.embedding_dim
+        )  # [batch_size, seq_len, spread_dim, embedding_dim]
 
         act_logits = self.forward_output(out) * self.max_action
 
