@@ -1,19 +1,23 @@
+import contextlib
 import random
 from collections import defaultdict
 from typing import Any, DefaultDict, Dict, List, Tuple, Union
 
-import torch
-
-import gym
-import d4rl  # put import for d4rl after gym.  its required
 import numpy as np
+import torch
 from torch.utils.data import Dataset, IterableDataset
-from tqdm.auto import trange, tqdm
+from tqdm.auto import tqdm, trange
 
+from inctxdt.batch import Batch, EpisodeList
+from inctxdt.datasets_meta import AcrossEpisodeMeta, BaseDataset, MultipleEpisodeMeta
 from inctxdt.env_helper import _envs_registered
 from inctxdt.episode_data import EpisodeData
-from inctxdt.batch import Batch, EpisodeList
-from inctxdt.datasets_meta import BaseDataset, AcrossEpisodeMeta, MultipleEpisodeMeta
+
+
+with contextlib.redirect_stdout(None):
+    with contextlib.redirect_stderr(None):  # suppress d4rl warnings
+        import d4rl  # put import for d4rl after gym.  its required
+        import gym
 
 
 def wrap_env(
