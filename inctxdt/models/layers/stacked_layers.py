@@ -181,7 +181,6 @@ class SequentialAction(BaseInputOutput):
             new_branch = nn.Linear(*args, **kwargs)
 
         if optimizer:
-            breakpoint()
             optimizer.add_param_group({"params": new_branch.parameters()})
 
         self.branches[branch_name] = new_branch

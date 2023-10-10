@@ -31,3 +31,7 @@ docker run --rm --ipc=host --gpus all -it -v $HOME/.d4rl:/root/.d4rl -v $HOME/.c
 
 # to run on hpc:
 follow dockerfile for setting up mujoco and python libraries. since you cant install with apt you will also need to use the following `conda install mesalib glew glfw patchelf -y`.  Also make sure you set the LD_LIBRARY_PATH
+
+
+# in future i should use  simple_parsing over pyrallis.  it seems nicer and better to work with if i have different scripts going on that control different parts
+`from simple_parsing import ArgumentParser, Serializable`

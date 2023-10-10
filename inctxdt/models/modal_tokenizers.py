@@ -74,11 +74,24 @@ class ModalTokenizers:
         return self.tokenizers[modal]
 
     def new_tokenizer(
-        self, modal: str, data: np.ndarray, num_bins: int, strategy: str = "quantile", per_column: bool = False
+        self,
+        modal: str,
+        data: np.ndarray,
+        strategy: str = "quantile",
+        per_column: bool = False,
+        num_bins: int = None,
+        # num_embeddings: int = None,
     ):
+        assert num_bins or self.tokenizers[modal].num_bins, "either num_bins or previous tokenizer must be already set"
+
+        if num_bins is None:
+            prev_num_bins = self.tokenizers[modal].num_bins
+            num_bins = prev_num_bins // data.shape[-1]
+
         tokenizer = Tokenizer(num_bins=num_bins, strategy=strategy, per_column=per_column)
         tokenizer.create(data, device=self.device)
         self.tokenizers[modal] = tokenizer
+        return tokenizer
 
     def __getattr__(self, modal: str):
         return self.tokenizers[modal]

@@ -78,7 +78,6 @@ class TestGetEnv(unittest.TestCase):
 
         new_env = env_fn()
         obs = new_env.reset()[0]
-        breakpoint()
         assert obs.shape == obs_space.shape
 
     def test_d4rl_dataset(self):

@@ -103,6 +103,6 @@ def action_head(
 
         # [batch_size, 3, seq_len, emb_dim]
         x_out = F.adaptive_avg_pool2d(x_postnorm, (act_dim, self.embedding_dim))
-        # breakpoint()
+
         x_out = self.head["activation"](self.head["linear"](x_out))
         return x_out

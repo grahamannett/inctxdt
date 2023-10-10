@@ -1,7 +1,13 @@
-import gymnasium
+import contextlib
+
 import numpy as np
 
 from inctxdt.config import Config
+
+# suppress gym's print statements
+with contextlib.redirect_stdout(None) and contextlib.redirect_stderr(None):
+    import gymnasium
+    import gym
 
 
 class FlattenEnv(gymnasium.ObservationWrapper):
@@ -61,9 +67,6 @@ def get_env_gymnasium(env_name: str, config=None, venv: bool = True, **kwargs):
 
 
 def get_env_gym(env_name: str, config: Config, venv: bool = True, **kwargs):
-    import gym
-    import d4rl
-
     mean = kwargs.get("mean", config.state_mean)
     std = kwargs.get("std", config.state_std)
     reward_scale = kwargs.get("reward_scale", config.reward_scale)

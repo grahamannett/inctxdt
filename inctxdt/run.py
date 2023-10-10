@@ -122,36 +122,62 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
 
     downstream_dataloader = dataloader_from_dataset(downstream_dataset, config=config, accelerator=accelerator)
 
+    # before we patch the layer, we swap the tokenizer and remove the old path/params for states/actions
+    if config.downstream.patch_states:
+        model.embed_paths.branches.states = None
+
+    if config.downstream.patch_actions:
+        # we likely need to generate new tokenizer as dim is different for downstream dataset
+        model.embed_paths.branches.actions = None
+
+        # we might patch actions but there is no tokenizer e.g. for non-tokenized models
+        if hasattr(model.discretizers, "new_tokenizer"):
+            model.discretizers.new_tokenizer(
+                "actions",
+                data=np.concatenate([v["actions"] for v in downstream_dataset.dataset]),
+                per_column=config.modal_embed.per_action_encode,
+            )
+
+    model_params = []
+    base_model_params = list(model.parameters())
+
     if config.downstream.patch_states:
         states_branch = model.embed_paths.new_branch(
             "states",
             new_branch=torch.nn.Linear(in_features=downstream_obs_space.shape[0], out_features=config.embedding_dim),
-            optimizer=optimizer if config.downstream.update_optim_states else None,
         )
+
+        if config.downstream.update_optim_states:
+            model_params += list(states_branch.parameters())
 
     if config.downstream.patch_actions:
         actions_branch = model.embed_paths.new_branch(
             "actions",
             action_dim=downstream_act_space.shape[0],
-            optimizer=optimizer if config.downstream.update_optim_actions else None,
         )
 
-    if config.downstream.reuse_optim == False:
-        optimizer = None
-        scheduler = None
+        if config.downstream.update_optim_actions:
+            model_params += list(actions_branch.parameters())
 
-    if config.downstream.optim_only_patched:
+    if config.downstream.reuse_optim:
+        optimizer, skipped_named = default_optimizer(model, config)
+        if skipped_named:
+            accelerator.print("Skipped names For Downstream:", skipped_named)
+    else:
+        if not config.downstream.optim_only_patched:
+            model_params += base_model_params
+
         optimizer = torch.optim.AdamW(
-            list(states_branch.parameters()) + list(actions_branch.parameters()),
+            model_params,
             lr=config.learning_rate,
             weight_decay=config.weight_decay,
             betas=config.betas,
         )
 
+    if optimizer is not None:
         scheduler = default_scheduler(optimizer, config)
 
     accelerator.print("Downstream task...", downstream_env_spec)
-
     train(
         model,
         dataloader=downstream_dataloader,

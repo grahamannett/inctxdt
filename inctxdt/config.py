@@ -97,8 +97,8 @@ class Downstream:
     dataset_type: str = "d4rl"
     dataset_min_length: int = None
 
-    update_steps: int = 100_000
-    eval_every: int = 1_000
+    update_steps: int = 10_000  # 100_000
+    eval_every: int = 100  # 1_000
     batch_size: int = BASE_BATCH_SIZE
 
     optim_only_patched: bool = False
@@ -110,7 +110,7 @@ class Downstream:
     update_optim_states: bool = False
     update_optim_actions: bool = False
 
-    skip_params: list[str] = field(default_factory=lambda: ["actions"])
+    skip_params: list[str] = field(default_factory=lambda: [])  # ["actions"]
 
     def load_config_path(self):
         with open(self.config_path, "r") as file:
