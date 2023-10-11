@@ -141,8 +141,9 @@ class Config:
     residual_dropout: float = 0.1
     embedding_dropout: float = 0.1
 
-    train_seed: int = 10
-    eval_seed: int = 10
+    seed: int = 42
+    train_seed: int = 42
+    eval_seed: int = 42
 
     max_action: float = 1.0
 
@@ -159,7 +160,7 @@ class Config:
     exp_name: str = "latest"
     save_model: bool = False
 
-    update_steps: int = 25_000  # 100_000
+    update_steps: int = 50_000  # 100_000
     epochs: int = 1
     num_workers: int = 8
     batch_size: int = BASE_BATCH_SIZE
@@ -208,7 +209,6 @@ class Config:
     eval_output_sequential: bool = False
 
     debug: str = None
-    seed: int = 42
 
     def __post_init__(self):
         self._check_dataset()
