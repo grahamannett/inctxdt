@@ -34,9 +34,6 @@ def default_optimizer(model, config, optimizer=None):
             else:
                 params.append(p)
 
-    # else:
-    # params = [p for p in model.parameters()]
-
     optimizer = torch.optim.AdamW(
         params,
         lr=config.learning_rate,
@@ -53,15 +50,6 @@ def default_scheduler(optimizer, config):
         lambda steps: min((steps + 1) / config.warmup_steps, 1),
     )
     return scheduler
-
-
-# def default_scheduler(optimizer, config):
-#     return get_scheduler(
-#         name=config.scheduler_type,
-#         optimizer=optimizer,
-#         num_warmup_steps=config.warmup_steps,
-#         num_training_steps=config.update_steps,
-#     )
 
 
 def _secondary_loss(preds, targets, mask, scale_factor: float = 1.0):

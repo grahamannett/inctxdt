@@ -27,3 +27,12 @@ for dataset in "${datasets[@]}"; do
 
     i=$((i + 1))
 done
+
+
+# compare the Pos/AltPos/MAltPos
+python inctxdt/run.py --cmd=train --device=cuda --config_path=conf/corl/dt/walker2d/medium_expert_v2.yaml --train_seed=10 --seed=10 --batch_size=256 --log.group=walker2d-medium_expert_v2 --modal_embed.per_action_encode=False --modal_embed.tokenize_action=True --modal_embed.action_embed_class=PosActionTokenizedSpreadEmbedding --log.job_type=PosActionTokenizedSpreadEmbedding --log.mode=online > /dev/null 2>&1 &
+
+
+python inctxdt/run.py --cmd=train --device=cuda --config_path=conf/corl/dt/walker2d/medium_expert_v2.yaml --train_seed=11 --seed=11 --batch_size=256 --log.group=walker2d-medium_expert_v2 --modal_embed.per_action_encode=False --modal_embed.tokenize_action=True --modal_embed.action_embed_class=AltPosActionTokenizedSpreadEmbedding --log.job_type=AltPosActionTokenizedSpreadEmbedding --log.mode=online > /dev/null 2>&1 &
+
+python inctxdt/run.py --cmd=train --device=cuda --config_path=conf/corl/dt/walker2d/medium_expert_v2.yaml --train_seed=10 --seed=10 --batch_size=256 --log.group=walker2d-medium_expert_v2 --modal_embed.per_action_encode=False --modal_embed.tokenize_action=True --modal_embed.action_embed_class=MAltPosActionTokenizedSpreadEmbedding --log.job_type=MAltPosActionTokenizedSpreadEmbedding --log.mode=online > /dev/null 2>&1 &

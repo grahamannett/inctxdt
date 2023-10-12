@@ -160,6 +160,7 @@ def venv_eval_rollout(
                 actions=actions[:, : step + 1][:, -seq_len:],
                 returns_to_go=returns[:, : step + 1][:, -seq_len:],
                 timesteps=timesteps[:, : step + 1][:, -seq_len:],
+                remove_last_actions=(action_dim - act_i),
             )
 
             if isinstance(output, ModelOutput):

@@ -74,7 +74,6 @@ class ActionTokenizedSpreadEmbedding(BaseActionEmbedding):
         self.max_num_actions = max_num_actions
 
         self.action_emb = nn.Embedding(token_size, embedding_dim)
-        self.action_pos_emb = nn.Parameter(torch.rand(self.max_num_actions, self.embedding_dim))
         self._action_head = nn.Sequential(nn.Linear(self.embedding_dim, 1), nn.Tanh())
 
     def add_time_emb(self, time_emb: torch.Tensor, tokens: torch.Tensor, **kwargs) -> torch.Tensor:
@@ -92,13 +91,6 @@ class ActionTokenizedSpreadEmbedding(BaseActionEmbedding):
         embeds = torch.stack([ret_emb, state_emb] + [act_emb[..., i, :] for i in range(act_emb.shape[-2])], dim=2)
         return embeds
         # versus what was here before: embeds = torch.cat([torch.stack([ret_emb, state_emb], dim=2), act_emb], dim=2)
-        # return embeds
-
-        # act_emb = act_emb.reshape(
-        #     act_emb.shape[0], state_emb.shape[1], -1, self.embedding_dim
-        # )  # [bs, seq_len, action_dim, emb_dim]
-        # embeds = torch.cat([torch.stack([ret_emb, state_emb], dim=2), act_emb], dim=2)
-        # return embeds
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # put all actions in the time dim
@@ -115,13 +107,55 @@ class ActionTokenizedSpreadEmbedding(BaseActionEmbedding):
         # not storing n_steps, action_dim (ie x.shape[1], x.shape[2]) because want to avoid updating those values but it might be quicker than passing in a
         x = self.action_emb(x)
         return x
-        # x = x.reshape(x.shape[0], -1, self.embedding_dim)  # [bs, seq_len * action_dim, emb_dim]
 
         # add the action pos emb before spreading out
         # x += self.action_pos_emb[: x.shape[-2], :]
 
     def action_head(self, x: torch.Tensor, **kwargs):
-        # return self._action_head(x[:, :, 1:-1, :]).squeeze(-1)
+        return self._action_head(x[:, :, 1:-1, :]).squeeze(-1)
+
+
+class PosActionTokenizedSpreadEmbedding(ActionTokenizedSpreadEmbedding):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.action_pos_emb = nn.Parameter(torch.rand(self.max_num_actions, self.embedding_dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.action_emb(x)
+        x += self.action_pos_emb[: x.shape[-2], :]
+        return x
+
+    def action_head(self, x: torch.Tensor, **kwargs):
+        return self._action_head(x[:, :, 1:-1, :]).squeeze(-1)
+
+
+class AltPosActionTokenizedSpreadEmbedding(ActionTokenizedSpreadEmbedding):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.action_pos_emb = nn.Embedding(self.max_num_actions, self.embedding_dim)
+        self.register_buffer("action_idx", torch.arange(self.max_num_actions))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.action_emb(x)
+        x += self.action_pos_emb(self.action_idx[: x.shape[-2]])
+        return x
+
+    def action_head(self, x: torch.Tensor, **kwargs):
+        return self._action_head(x[:, :, 1:-1, :]).squeeze(-1)
+
+
+class MAltPosActionTokenizedSpreadEmbedding(ActionTokenizedSpreadEmbedding):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.action_pos_emb = nn.Embedding(self.max_num_actions, self.embedding_dim)
+        self.register_buffer("action_idx", torch.arange(self.max_num_actions))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.action_emb(x)
+        x *= self.action_pos_emb(self.action_idx[: x.shape[-2]])
+        return x
+
+    def action_head(self, x: torch.Tensor, **kwargs):
         return self._action_head(x[:, :, 1:-1, :]).squeeze(-1)
 
 
@@ -129,6 +163,9 @@ ModalEmbCls = {
     "ActionEmbedding": ActionEmbedding,
     "ActionTokenizedEmbedding": ActionTokenizedEmbedding,
     "ActionTokenizedSpreadEmbedding": ActionTokenizedSpreadEmbedding,
+    "PosActionTokenizedSpreadEmbedding": PosActionTokenizedSpreadEmbedding,
+    "AltPosActionTokenizedSpreadEmbedding": AltPosActionTokenizedSpreadEmbedding,
+    "MAltPosActionTokenizedSpreadEmbedding": MAltPosActionTokenizedSpreadEmbedding,
 }
 
 
