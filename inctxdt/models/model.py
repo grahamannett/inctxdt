@@ -153,7 +153,7 @@ class DecisionTransformer(nn.Module):
         timesteps: torch.Tensor,  # [batch_size, seq_len]
         mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
         padding_mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
-        remove_last_actions: int = None,
+        # remove_last_actions: int = None,
         **kwargs,
     ) -> torch.FloatTensor:
         bs, seq_len = states.shape[0], states.shape[1]
@@ -173,9 +173,6 @@ class DecisionTransformer(nn.Module):
 
         spread_dim = sequence.shape[1] // seq_len
 
-        if remove_last_actions is not None:
-            sequence = sequence[:, :-remove_last_actions, :]
-
         if padding_mask is not None:
             # padding mask comes in as [bs, seq_len] -> want [bs, unpacked_sequence_len]
             padding_mask = torch.stack([padding_mask for _ in range(spread_dim)], dim=-1).reshape(bs, -1)
@@ -188,9 +185,12 @@ class DecisionTransformer(nn.Module):
 
         # norm and reshape to [batch_size, seq_len, spread_dim, embedding_dim]
         out = self.out_norm(out)
+
         out = out.reshape(bs, seq_len, -1, self.embedding_dim)  # [batch_size, seq_len, spread_dim, embedding_dim]
 
-        act_logits = self.forward_output(out) * self.max_action
+        act_logits = self.forward_output(out).squeeze(-1) * self.max_action
+
+        # act_logits = act_logits[:, :, 1:-1, :].squeeze(-1)
 
         # extra
         obs_logits = self.observation_head(out[:, :, 0, :])

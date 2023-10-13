@@ -37,6 +37,36 @@ class ActionEmbedding(BaseActionEmbedding):
         return self.action_emb(x)
 
 
+class ActionSpreadEmbedding(nn.Module):
+    def __init__(self, action_dim: int, embedding_dim: int, max_num_actions: int = 100, *args, **kwargs):
+        super().__init__()
+        self.action_dim = action_dim
+        self.embedding_dim = embedding_dim
+        self.max_num_actions = max_num_actions
+        self.action_emb = nn.Linear(1, self.embedding_dim)
+        self._action_head = nn.Sequential(nn.Linear(self.embedding_dim, 1), nn.Tanh())
+
+        self.action_pos_emb = nn.Embedding(self.max_num_actions + 1, self.embedding_dim)
+        self.register_buffer("action_idx", torch.arange(self.max_num_actions) + 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.action_emb(x.unsqueeze(-1))
+        x += self.action_pos_emb(self.action_idx[: x.shape[-2]])
+        return x
+
+    def add_time_emb(self, time_emb: torch.Tensor, tokens: torch.Tensor, **kwargs) -> torch.Tensor:
+        return time_emb.unsqueeze(-2).repeat_interleave(tokens.shape[-1], dim=2)
+
+    def combine_embeds(
+        self, ret_emb: torch.Tensor, state_emb: torch.Tensor, act_emb: torch.Tensor, **kwargs
+    ) -> torch.Tensor:
+        embeds = torch.stack([ret_emb, state_emb] + [act_emb[..., i, :] for i in range(act_emb.shape[-2])], dim=2)
+        return embeds
+
+    def action_head(self, x: torch.Tensor, **kwargs):
+        return self._action_head(x[:, :, 1:-1, :])
+
+
 class ActionTokenizedEmbedding(BaseActionEmbedding):
     def __init__(self, action_dim: int, embedding_dim: int, token_size: int, pool_fn: str = torch.sum, *args, **kwargs):
         super().__init__(action_dim=action_dim, embedding_dim=embedding_dim, *args, **kwargs)
@@ -112,7 +142,8 @@ class ActionTokenizedSpreadEmbedding(BaseActionEmbedding):
         # x += self.action_pos_emb[: x.shape[-2], :]
 
     def action_head(self, x: torch.Tensor, **kwargs):
-        return self._action_head(x[:, :, 1:-1, :]).squeeze(-1)
+        return self._action_head(x[:, :, 1:-1, :])
+        # return self._action_head(x[:, :, :, :])
 
 
 class PosActionTokenizedSpreadEmbedding(ActionTokenizedSpreadEmbedding):
@@ -124,9 +155,6 @@ class PosActionTokenizedSpreadEmbedding(ActionTokenizedSpreadEmbedding):
         x = self.action_emb(x)
         x += self.action_pos_emb[: x.shape[-2], :]
         return x
-
-    def action_head(self, x: torch.Tensor, **kwargs):
-        return self._action_head(x[:, :, 1:-1, :]).squeeze(-1)
 
 
 class AltPosActionTokenizedSpreadEmbedding(ActionTokenizedSpreadEmbedding):
@@ -140,9 +168,6 @@ class AltPosActionTokenizedSpreadEmbedding(ActionTokenizedSpreadEmbedding):
         x += self.action_pos_emb(self.action_idx[: x.shape[-2]])
         return x
 
-    def action_head(self, x: torch.Tensor, **kwargs):
-        return self._action_head(x[:, :, 1:-1, :]).squeeze(-1)
-
 
 class MAltPosActionTokenizedSpreadEmbedding(ActionTokenizedSpreadEmbedding):
     def __init__(self, *args, **kwargs):
@@ -155,9 +180,6 @@ class MAltPosActionTokenizedSpreadEmbedding(ActionTokenizedSpreadEmbedding):
         x *= self.action_pos_emb(self.action_idx[: x.shape[-2]])
         return x
 
-    def action_head(self, x: torch.Tensor, **kwargs):
-        return self._action_head(x[:, :, 1:-1, :]).squeeze(-1)
-
 
 ModalEmbCls = {
     "ActionEmbedding": ActionEmbedding,
@@ -166,6 +188,7 @@ ModalEmbCls = {
     "PosActionTokenizedSpreadEmbedding": PosActionTokenizedSpreadEmbedding,
     "AltPosActionTokenizedSpreadEmbedding": AltPosActionTokenizedSpreadEmbedding,
     "MAltPosActionTokenizedSpreadEmbedding": MAltPosActionTokenizedSpreadEmbedding,
+    "ActionSpreadEmbedding": ActionSpreadEmbedding,
 }
 
 
