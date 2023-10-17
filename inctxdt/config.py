@@ -83,7 +83,7 @@ class ModalEmbedConfig:
     tokenize_action: bool = False
     num_bins: int = 3000
     strategy: str = "quantile"
-    per_action_encode: bool = False
+    per_action_encode: bool = True
     EmbedClass: str = "SequentialAction"
 
     def __post_init__(self):
@@ -97,14 +97,14 @@ class Downstream:
     dataset_type: str = "d4rl"
     dataset_min_length: int = None
 
-    update_steps: int = 10_000  # 100_000
-    eval_every: int = 100  # 1_000
+    update_steps: int = 50_000  # 100_000
+    eval_every: int = 500  # 1_000
     batch_size: int = BASE_BATCH_SIZE
 
     optim_only_patched: bool = False
     patch_states: bool = True
     patch_actions: bool = False
-    reuse_optim: bool = False
+    optim_use_default: bool = False
     reset_sched: bool = False
 
     update_optim_states: bool = False

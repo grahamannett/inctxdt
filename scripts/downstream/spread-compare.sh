@@ -70,8 +70,8 @@ run_downstream "ActionTokenizedEmbedding"       "PatchedActionTokenizedEmbedding
 run_downstream "ActionTokenizedSpreadEmbedding" "PatchedActionTokenizedSpreadEmbedding"             "True"      "True"      "False"
 run_downstream "ActionTokenizedSpreadEmbedding" "PatchedActionTokenizedSpreadEmbeddingSequential"   "True"      "True"      "True"
 run_downstream "ActionTokenizedSpreadEmbedding" "ActionTokenizedSpreadEmbedding"                    "True"      "False"     "False"
-run_downstream "ActionEmbedding"                "PatchedActionEmbedding"                            "False"     "True"      "False" "--downstream.reuse_optimizer=False"
-run_downstream "ActionEmbedding"                "ReusedOptimPatchedActionEmbedding"                 "False"     "True"      "False" "--downstream.reuse_optimizer=True"
+run_downstream "ActionEmbedding"                "PatchedActionEmbedding"                            "False"     "True"      "False" "--downstream.optim_use_defaultizer=False"
+run_downstream "ActionEmbedding"                "ReusedOptimPatchedActionEmbedding"                 "False"     "True"      "False" "--downstream.optim_use_defaultizer=True"
 
 
 

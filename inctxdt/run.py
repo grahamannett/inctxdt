@@ -126,9 +126,9 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
     if config.downstream.patch_states:
         model.embed_paths.branches.states = None
 
-    if config.downstream.patch_actions:
+    if config.modal_embed.tokenize_action:
         # we likely need to generate new tokenizer as dim is different for downstream dataset
-        model.embed_paths.branches.actions = None
+        # model.embed_paths.branches.actions = None
 
         # we might patch actions but there is no tokenizer e.g. for non-tokenized models
         if hasattr(model.discretizers, "new_tokenizer"):
@@ -138,7 +138,8 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
                 per_column=config.modal_embed.per_action_encode,
             )
 
-    model_params = []
+    param_groups = []
+    param_groups_names = []
     base_model_params = list(model.parameters())
 
     if config.downstream.patch_states:
@@ -147,8 +148,9 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
             new_branch=torch.nn.Linear(in_features=downstream_obs_space.shape[0], out_features=config.embedding_dim),
         )
 
-        if config.downstream.update_optim_states:
-            model_params += list(states_branch.parameters())
+    if config.downstream.update_optim_states:
+        param_groups.append({"params": model.embed_paths.branches.states.parameters(), "lr": config.learning_rate})
+        param_groups_names.append("states")
 
     if config.downstream.patch_actions:
         actions_branch = model.embed_paths.new_branch(
@@ -156,19 +158,22 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
             action_dim=downstream_act_space.shape[0],
         )
 
-        if config.downstream.update_optim_actions:
-            model_params += list(actions_branch.parameters())
+    if config.downstream.update_optim_actions:
+        param_groups.append({"params": model.embed_paths.branches.actions.parameters(), "lr": config.learning_rate})
+        param_groups_names.append("actions")
 
-    if config.downstream.reuse_optim:
+    # if we are only patching states/actions then we dont want to update the base model params
+    if not config.downstream.optim_only_patched:
+        param_groups.append({"params": base_model_params, "lr": config.learning_rate})
+        param_groups_names.append("base")
+
+    if config.downstream.optim_use_default:
         optimizer, skipped_named = default_optimizer(model, config)
         if skipped_named:
             accelerator.print("Skipped names For Downstream:", skipped_named)
     else:
-        if not config.downstream.optim_only_patched:
-            model_params += base_model_params
-
         optimizer = torch.optim.AdamW(
-            model_params,
+            param_groups,
             lr=config.learning_rate,
             weight_decay=config.weight_decay,
             betas=config.betas,
