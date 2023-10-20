@@ -163,7 +163,7 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
         param_groups_names.append("actions")
 
     # if we are only patching states/actions then we dont want to update the base model params
-    if not config.downstream.optim_only_patched:
+    if config.downstream.optim_only_patched is False:
         param_groups.append({"params": base_model_params, "lr": config.learning_rate})
         param_groups_names.append("base")
 
@@ -171,6 +171,7 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
         optimizer, skipped_named = default_optimizer(model, config)
         if skipped_named:
             accelerator.print("Skipped names For Downstream:", skipped_named)
+        param_groups_names = ["all"]
     else:
         optimizer = torch.optim.AdamW(
             param_groups,
