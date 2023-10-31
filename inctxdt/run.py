@@ -85,7 +85,8 @@ def make_dataset_from_config(config: Config, dataset_name: str = None):
 def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_spec=None, env=None, venv=None):
     # run original training
 
-    model, optimizer, scheduler, infos = run_autoregressive(
+    # returns: model, optimizer, scheduler, infos
+    model, _, _, infos = run_autoregressive(
         config,
         dataset,
         dataloader,
@@ -143,6 +144,7 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
     base_model_params = list(model.parameters())
 
     if config.downstream.patch_states:
+        del model.embed_paths.branches["states"]
         states_branch = model.embed_paths.new_branch(
             "states",
             new_branch=torch.nn.Linear(in_features=downstream_obs_space.shape[0], out_features=config.embedding_dim),
@@ -153,6 +155,7 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
         param_groups_names.append("states")
 
     if config.downstream.patch_actions:
+        del model.embed_paths.branches["actions"]
         actions_branch = model.embed_paths.new_branch(
             "actions",
             action_dim=downstream_act_space.shape[0],
@@ -184,6 +187,7 @@ def run_downstream(config, dataset=None, dataloader=None, accelerator=None, env_
         scheduler = default_scheduler(optimizer, config)
 
     accelerator.print("Downstream task...", downstream_env_spec)
+    torch.cuda.empty_cache()
     train(
         model,
         dataloader=downstream_dataloader,
