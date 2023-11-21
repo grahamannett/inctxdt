@@ -3,21 +3,33 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pyrallis
 import seaborn as sns
+import torch
 
 from inctxdt.config import Config, PlotConfig
 from inctxdt.run import make_dataset_from_config
 
 # change to seaborn
 
-mpl.rcParams.update(mpl.rcParamsDefault)
-plt.rcParams["text.usetex"] = True
+# mpl.rcParams.update(mpl.rcParamsDefault)
+# plt.rcParams["text.usetex"] = True
 
-sns.set_theme()
-sns.set_style("dark")
+# sns.set_theme()
+# sns.set_style("dark")
+
+plt.style.use("ggplot")
 
 
 def plot_histogram(dataset, dataset_name, max_actions: int = 6, plot_config: PlotConfig = None):
     actions = np.concatenate([v["actions"] for v in dataset.dataset])
+
+    torch.save(
+        {
+            "dataset_name": dataset_name,
+            "actions": actions,
+        },
+        f"output/histogram/actions-{dataset_name}.pt",
+    )
+    # np.save(f"output/histogram/actions-{dataset_name}.npy", actions)
 
     num_actions = min(max_actions, actions.shape[-1])
 
@@ -31,7 +43,7 @@ def plot_histogram(dataset, dataset_name, max_actions: int = 6, plot_config: Plo
 
     axs = axs.ravel()  # Flatten the axis array for easier indexing
     for i in range(len(axs)):
-        axs[i].hist(actions[:, i], bins="auto", edgecolor="k", alpha=0.7)
+        axs[i].hist(actions[:, i], bins="auto", edgecolor="k", color="tab:blue", alpha=0.7)
 
         # set initial and then change if we pass
         subplot_title = f"Action {i+1}"
